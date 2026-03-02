@@ -5,21 +5,21 @@ include(lib/platform.cmake)
 # Stop Pico SDK from trying to fetch/build picotool on this machine
 set(PICO_SDK_FETCH_PICOTOOL OFF)
 
-project(nightowl C CXX ASM)
+project(infinite-feeder C CXX ASM)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
 add_subdirectory(lib)
 
-add_executable(nightowl-firmware nightowl-firmware.cpp
+add_executable(firmware firmware.cpp
 )
 
-target_link_libraries(nightowl-firmware 
+target_link_libraries(firmware 
     lib-pi
     lib-pi-threads
 )
 
-pico_enable_stdio_usb(nightowl-firmware 1)
-pico_enable_stdio_uart(nightowl-firmware 0)
-pico_add_extra_outputs(nightowl-firmware)
+pico_enable_stdio_usb(firmware 1)
+pico_enable_stdio_uart(firmware 0)
+pico_add_extra_outputs(firmware)
