@@ -39,7 +39,7 @@
 
 // Configuration Values
 
-static const int microstepping = 16;
+static const int microstepping = 4;
 #define STEPS_PER_MM	(680*microstepping/16)
 
 #define ACTIVE_INIT_MM	2500
