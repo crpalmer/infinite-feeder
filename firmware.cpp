@@ -148,12 +148,8 @@ public:
 class Lane {
 public:
     Lane(LaneSwitches *lane_switches, OutputSwitches *output_switches, Stepper *stepper, const char *name) : name(name), lane_switches(lane_switches), output_switches(output_switches), stepper(stepper) {
-	bool is_present = lane_switches->is_present();
-	bool is_loaded = lane_switches->is_loaded();
-
-	state = EMPTY;
-	if (is_present && is_loaded) state = EARLY_ACTIVE_INIT;
-	if (! is_present && is_loaded) state = EMPTYING;
+	if (lane_switches->is_loaded()) state = EARLY_ACTIVE_INIT;
+	else state = EMPTY;
 
         printf("%s: initial state: %s\n", name, state_to_string(state));
     }
