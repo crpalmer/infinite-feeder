@@ -467,9 +467,9 @@ static void threads_main(int argc, char **argv) {
 		pi_reboot_bootloader();
 	    } else if (strcmp(line, "state") == 0) {
 		coordinator->dump_state();
-	    } else if (strcmp(line, "threads") == 0) {
+	    } else if (strcmp(line, "threads") == 0 || strcmp(line, "t") == 0) {
 		pi_threads_dump_state();
-	    } else if (strncmp(line, "state-dumper", 12) == 0) {
+	    } else if (strncmp(line, "state-dumper", 12) == 0 || strcmp(line, "s") == 0) {
 		int enabled = true;
 		sscanf(&line[12], "%d", &enabled);
 		if (enabled) state_dumper->enable();
