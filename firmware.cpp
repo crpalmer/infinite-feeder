@@ -148,10 +148,6 @@ public:
 class Lane {
 public:
     Lane(LaneSwitches *lane_switches, OutputSwitches *output_switches, Stepper *stepper, const char *name) : name(name), lane_switches(lane_switches), output_switches(output_switches), stepper(stepper) {
-	if (lane_switches->is_loaded()) state = EARLY_ACTIVE_INIT;
-	else state = EMPTY;
-
-        printf("%s: initial state: %s\n", name, state_to_string(state));
     }
 
     void update() {
@@ -169,6 +165,12 @@ public:
 	    old_state = state;
 
 	    switch (state) {
+	    case INIT:
+		if (lane_switches->is_loaded()) state = EARLY_ACTIVE_INIT;
+		else state = EMPTY;
+		printf("%s: initial state: %s\n", name, state_to_string(state));
+		break;
+
 	    case EMPTY:
 		if (is_present) state = PRE_LOADING;
 		break;
@@ -271,6 +273,7 @@ private:
     int64_t active_init_until = 0;
 
     enum State {
+	    INIT,
 	    EMPTY, PRE_LOADING, PRE_LOADING_RETRACT, READY,
 	    ACTIVATING, LOADING,
 	    EARLY_ACTIVE_INIT, EARLY_ACTIVE, EARLY_ACTIVE_WAITING,
@@ -282,6 +285,7 @@ private:
 private:
     const char *state_to_string(enum State state) {
 	switch (state) {
+	case INIT: return "init";
 	case EMPTY: return "empty";
 	case PRE_LOADING: return "pre-loading";
 	case PRE_LOADING_RETRACT: return "pre-loading(retract)";
