@@ -45,7 +45,7 @@ static const int microstepping = 4;
 #define ACTIVE_INIT_MM	2500
 
 #define PRELOAD_SPEED	5		// mm/sec
-#define LOADING_SPEED	10
+#define LOADING_SPEED	20
 #define REFILL_SPEED	10
 
 // -------------------------- END CONFIG --------------------------
