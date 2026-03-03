@@ -226,7 +226,25 @@ public:
 	    case EMPTYING:
 		if (! has_y_output) state = EMPTY;
 		break;
-	    case MANUAL:
+	    case STOP:
+		break;
+	    case FEED:
+		if (! is_loaded) state = STOP;
+		else if (buffer_is_full) state = FEED_WAITING;
+		else feed = manual_feed;
+		break;
+	    case FEED_WAITING:
+		if (! is_loaded) state = STOP;
+		else if (! buffer_is_full) state = FEED;
+		break;
+	    case RETRACT:
+		if (! is_present) state = STOP;
+		else if (buffer_is_empty) state = RETRACT_WAITING;
+		else feed = manual_feed;
+		break;
+	    case RETRACT_WAITING:
+		if (! is_present) state = STOP;
+		else if (! buffer_is_empty) state = RETRACT;
 		break;
 	    }
 
@@ -262,6 +280,29 @@ public:
 
     void error() {
 	stepper->set_speed(0);
+	state = STOP;
+    }
+
+    void stop() {
+	state = STOP;
+    }
+
+    void feed(int mm_per_sec = 10) {
+	manual_feed = mm_per_sec;
+	state = FEED;
+    }
+
+    void retract(int mm_per_sec = 10) {
+	manual_feed = -mm_per_sec;
+	state = RETRACT;
+    }
+
+    void resume() {
+	if (state >= STOP) state = INIT;
+    }
+
+    void jump_to_active() {
+	if (state >= LOADING && state < ACTIVE) state = ACTIVE;
     }
 
 private:
@@ -271,6 +312,7 @@ private:
     Stepper *stepper;
 
     int64_t active_init_until = 0;
+    int manual_feed = 0;
 
     enum State {
 	    INIT,
@@ -279,8 +321,8 @@ private:
 	    EARLY_ACTIVE_INIT, EARLY_ACTIVE, EARLY_ACTIVE_WAITING,
 	    ACTIVE, WAITING,
 	    EMPTYING,
-	    MANUAL
-	} state = EMPTY;
+	    STOP, FEED, FEED_WAITING, RETRACT, RETRACT_WAITING
+	} state = INIT;
 
 private:
     const char *state_to_string(enum State state) {
@@ -298,7 +340,11 @@ private:
 	case ACTIVE: return "active";
 	case WAITING: return "waiting";
 	case EMPTYING: return "emptying";
-	case MANUAL: return "manual";
+	case STOP: return "stop";
+	case FEED: return "feed";
+	case FEED_WAITING: return "feed-waiting";
+	case RETRACT: return "retract";
+	case RETRACT_WAITING: return "retract-waiting";
 	}
 	return "** INVALID STATE**";
     }
@@ -375,7 +421,10 @@ public:
 	if (force || l2_changed || (active_lane == lane_2 && output_changed)) lane_2->update();
 
 	if (active_lane && ! active_lane->is_active()) active_lane = NULL;
+	activate();
+    }
 
+    void activate(bool jump_to_active = false) {
 	if (! active_lane) {
 	    if (lane_1->is_ready()) active_lane = lane_1;
 	    else if (lane_2->is_ready()) active_lane = lane_2;
@@ -384,6 +433,10 @@ public:
 		printf("activated: ");
 		active_lane->dump_state();
 	    }
+	}
+	if (active_lane && jump_to_active) {
+	    active_lane->jump_to_active();
+	    update(true);
 	}
     }
 	
@@ -404,9 +457,30 @@ public:
 	printf("\n");
     }
 
-private:
-    void activate() {
-	if (active_lane) return;
+    void stop() {
+	lane_1->stop();
+	lane_2->stop();
+	update(true);
+    }
+
+    void feed(int lane, int speed) {
+	if (lane == 1) lane_1->feed(speed);
+	else if (lane == 2) lane_2->feed(speed);
+	else if (lane < 0 && active_lane) active_lane->feed(speed);
+	update(true);
+    }
+
+    void retract(int lane, int speed) {
+	if (lane == 0) lane_1->retract(speed);
+	else if (lane == 2) lane_2->retract(speed);
+	else if (lane < 0 && active_lane) active_lane->retract(speed);
+	update(true);
+    }
+
+    void resume() {
+	lane_1->resume();
+	lane_2->resume();
+	update(true);
     }
 
 private:
@@ -478,10 +552,33 @@ static void threads_main(int argc, char **argv) {
 		sscanf(&line[12], "%d", &enabled);
 		if (enabled) state_dumper->enable();
 		else state_dumper->disable();
+	    } else if (strcmp(line, "active") == 0) {
+		coordinator->resume();
+		coordinator->activate(true);
+	    } else if (strcmp(line, "stop") == 0) {
+		coordinator->stop();
+	    } else if (strcmp(line, "resume") == 0) {
+		coordinator->resume();
+	    } else if (strncmp(line, "feed", 5) == 0) {
+		int lane = -1;
+		int speed = LOADING_SPEED;
+		sscanf(&line[4], "%d %d", &lane, &speed);
+		coordinator->feed(lane, speed);
+	    } else if (strncmp(line, "retract", 7) == 0) {
+		int lane = -1;
+		int speed = LOADING_SPEED;
+		sscanf(&line[7], "%d %d", &lane, &speed);
+		coordinator->retract(lane, speed);
 	    } else if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) {
 		printf("bootsel: reboot to bootloader mode\n");
 		printf("state: dump state\n");
 		printf("threads: dump thread state\n");
+		printf("\n");
+		printf("active: exit stop / early feeding to move to active\n");
+		printf("stop: switch to manual processing\n");
+		printf("feed [lane [speed]]: cause a lane to start feeding filament\n");
+		printf("retract [lane [speed]]: cause a lane to start retracting filament\n");
+		printf("resume: go back to normal processing\n");
 	    } else {
 		printf("help or ? for usage\n");
 	    }
