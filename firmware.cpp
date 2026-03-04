@@ -9,6 +9,7 @@
 #include "thread-interrupt-notifier.h"
 #include "time-utils.h"
 #include "tmc2209.h"
+#include "uart.h"
 
 // Switch pins (active low, pull-up)
 #define PIN_L1_IN      26
@@ -387,7 +388,7 @@ static Stepper *create_lane_2_stepper(UART_Tx *tx) {
 class Coordinator : ThreadInterruptNotifier {
 public:
     Coordinator() : ThreadInterruptNotifier("coordinator") {
-	tx = new UART_Tx(TMC_UART_TX, 115200);
+	tx = pico_new_pio_uart_tx(TMC_UART_TX, 115200);
 	output_switches = new OutputSwitches(this);
 	lane_1_switches = new LaneSwitches(PIN_L1_IN, PIN_L1_OUT, this);
 	lane_2_switches = new LaneSwitches(PIN_L2_IN, PIN_L2_OUT, this);
