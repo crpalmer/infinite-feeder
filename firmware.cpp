@@ -78,8 +78,6 @@ static config_t config = {
     },
 };
 
-#define ACTIVE_INIT_MM 2500
-
 // -------------------------- END CONFIG --------------------------
 
 #define TRACE_STATE(x) printf("%s => %s\n", name, x)
@@ -198,7 +196,7 @@ public:
 
 	    switch (state) {
 	    case INIT:
-		if (lane_switches->is_loaded()) state = EARLY_ACTIVE_INIT;
+		if (lane_switches->is_loaded()) state = ACTIVE;
 		else state = EMPTY;
 		printf("%s: initial state: %s\n", name, state_to_string(state));
 		break;
@@ -228,23 +226,9 @@ public:
 	    case LOADING:
 		// TODO: add a timeout in case the filament just isn't loadable and then do something (what??)
 		if (! is_loaded && ! has_y_output) state = EMPTY;
-		else if (has_y_output) state = EARLY_ACTIVE_INIT;
+		else if (has_y_output) state = ACTIVE;
 		// TODO: else if (buffer_is_empty) really short filament in here somewhere??
 		else feed = config.motor_config.loading_speed;
-		break;
-	    case EARLY_ACTIVE_INIT:
-		active_init_until = stepper->get_n_steps() + (ACTIVE_INIT_MM * config.motor_config.steps_per_mm);
-		state = EARLY_ACTIVE;
-		break;
-	    case EARLY_ACTIVE:
-		if (! is_loaded) state = EMPTYING;
-		else if (stepper->get_n_steps() >= active_init_until) state = ACTIVE;
-		else if (buffer_is_full) state = EARLY_ACTIVE_WAITING;
-		else feed = config.motor_config.refill_speed;
-		break;
-	    case EARLY_ACTIVE_WAITING:
-		if (! is_loaded) state = EMPTYING;
-		else if (! buffer_is_full) state = EARLY_ACTIVE;
 		break;
 	    case ACTIVE:
 		if (! is_loaded) state = EMPTYING;
@@ -343,14 +327,12 @@ private:
     BufferSwitches *buffer_switches;
     Stepper *stepper;
 
-    int64_t active_init_until = 0;
     int manual_feed = 0;
 
     enum State {
 	    INIT,
 	    EMPTY, PRE_LOADING, PRE_LOADING_RETRACT, READY,
 	    ACTIVATING, LOADING,
-	    EARLY_ACTIVE_INIT, EARLY_ACTIVE, EARLY_ACTIVE_WAITING,
 	    ACTIVE, WAITING,
 	    EMPTYING,
 	    STOP, FEED, FEED_WAITING, RETRACT, RETRACT_WAITING
@@ -366,9 +348,6 @@ private:
 	case READY: return "ready";
 	case ACTIVATING: return "activating";
 	case LOADING: return "loading";
-	case EARLY_ACTIVE_INIT: return "init(early)";
-	case EARLY_ACTIVE: return "active(early)";
-	case EARLY_ACTIVE_WAITING: return "waiting(early)";
 	case ACTIVE: return "active";
 	case WAITING: return "waiting";
 	case EMPTYING: return "emptying";
