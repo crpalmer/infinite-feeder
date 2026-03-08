@@ -1,4 +1,4 @@
- #include "pi.h"
+#include "pi.h"
 #include <cstring>
 #include <math.h>
 #include "gp-input.h"
@@ -11,43 +11,72 @@
 #include "tmc2209.h"
 #include "uart.h"
 
-// Switch pins (active low, pull-up)
-#define PIN_L1_IN      26
-#define PIN_L1_OUT     27
-#define PIN_L2_IN       4
-#define PIN_L2_OUT      3
-#define PIN_TURTLENECK_FULL  16
-#define PIN_TURTLENECK_EMPTY 22
-#define PIN_Y_OUTPUT    25
+typedef struct {
+    int	    present;
+    int	    loaded;
+    int	    enable;
+    int	    dir;
+    int	    step;
+    int	    uart_address;
+    bool    invert;
+} lane_config_t;
 
-// Steppers
-#define TMC_UART_TX	8
-#define TMC_UART_RX	9
-// M1 is on E0
-#define PIN_M1_EN      15
-#define PIN_M1_DIR     13
-#define PIN_M1_STEP    14
-#define PIN_M1_ADDRESS  3
+typedef struct {
+    int	    tx, rx;
+    int	    microstepping;
+    int	    steps_per_mm;
+    int	    preload_speed;
+    int	    loading_speed;
+    int	    refill_speed;
+} motor_config_t;
 
-// M2 ia on X
-#define PIN_M2_EN      12
-#define PIN_M2_DIR     10
-#define PIN_M2_STEP    11
-#define PIN_M2_ADDRESS  0
+typedef struct {
+    int	    input;
+    int	    full, empty;
+} buffer_config_t;
 
-#define M1_DIR_INVERT  0
-#define M2_DIR_INVERT  0
+typedef struct {
+    lane_config_t   lanes[2];
+    motor_config_t  motor_config;
+    buffer_config_t buffer;
+} config_t;
 
-// Configuration Values
+static config_t config = {
+    {
+	{
+	    .present = 26,
+	    .loaded = 27,
+	    .enable = 15,
+	    .dir = 13,
+	    .step = 14,
+	    .uart_address = 3,
+	    .invert = false },
+	{
+	    .present = 4,
+	    .loaded = 3,
+	    .enable = 12,
+	    .dir = 10,
+	    .step = 11,
+	    .uart_address = 0,
+	    .invert = false
+	},
+    },
+    {
+	.tx = 8, .rx = 9,
+	.microstepping = 4,
+	.steps_per_mm = 680/4,
+	.preload_speed = 5,
+	.loading_speed = 20,
+	.refill_speed = 10
+    },
+    {
+	.input = 25,
+	.full = 16,
+	.empty = 22
+    },
+};
 
-static const int microstepping = 4;
-#define STEPS_PER_MM	(680*microstepping/16)
-
-#define ACTIVE_INIT_MM	2500
-
-#define PRELOAD_SPEED	5		// mm/sec
-#define LOADING_SPEED	20
-#define REFILL_SPEED	10
+#define ACTIVE_INIT_MM 2500
 
 // -------------------------- END CONFIG --------------------------
 
@@ -83,9 +112,9 @@ private:
 
 class LaneSwitches {
 public:
-    LaneSwitches(int present_pin, int loaded_pin, ThreadInterruptNotifier *notifier) {
-	present_switch = new Switch(present_pin, notifier);
-	loaded_switch = new Switch(loaded_pin, notifier);
+    LaneSwitches(lane_config_t *config, ThreadInterruptNotifier *notifier) {
+	present_switch = new Switch(config->present, notifier);
+	loaded_switch = new Switch(config->loaded, notifier);
 	update();
     }
 
@@ -108,12 +137,12 @@ private:
     Switch *loaded_switch;
 };
 
-class OutputSwitches {
+class BufferSwitches {
 public:
-    OutputSwitches(ThreadInterruptNotifier *notifier) {
-	y_output_switch = new Switch(PIN_Y_OUTPUT, notifier);
-	buffer_full_switch = new Switch(PIN_TURTLENECK_FULL, notifier);
-	buffer_empty_switch = new Switch(PIN_TURTLENECK_EMPTY, notifier);
+    BufferSwitches(buffer_config_t *config, ThreadInterruptNotifier *notifier) {
+	y_output_switch = new Switch(config->input, notifier);
+	buffer_full_switch = new Switch(config->full, notifier);
+	buffer_empty_switch = new Switch(config->empty, notifier);
 	update();
     }
 
@@ -148,15 +177,15 @@ public:
 
 class Lane {
 public:
-    Lane(LaneSwitches *lane_switches, OutputSwitches *output_switches, Stepper *stepper, const char *name) : name(name), lane_switches(lane_switches), output_switches(output_switches), stepper(stepper) {
+    Lane(LaneSwitches *lane_switches, BufferSwitches *buffer_switches, Stepper *stepper, const char *name) : name(name), lane_switches(lane_switches), buffer_switches(buffer_switches), stepper(stepper) {
     }
 
     void update() {
 	bool is_present = lane_switches->is_present();
         bool is_loaded = lane_switches->is_loaded();
-	bool buffer_is_full = output_switches->buffer_is_full();
-	bool buffer_is_empty = output_switches->buffer_is_empty();
-	bool has_y_output = output_switches->has_y_output();
+	bool buffer_is_full = buffer_switches->buffer_is_full();
+	bool buffer_is_empty = buffer_switches->buffer_is_empty();
+	bool has_y_output = buffer_switches->has_y_output();
 
 	int feed;
 	enum State old_state;
@@ -179,19 +208,19 @@ public:
 		// TODO: add a timeout
 		if (! is_present) state = EMPTY;
 		else if (is_loaded) state = PRE_LOADING_RETRACT;
-		else feed = PRELOAD_SPEED;
+		else feed = config.motor_config.preload_speed;
 		break;
 	    case PRE_LOADING_RETRACT:
 		if (! is_present) state = EMPTY;
 		else if (! is_loaded) state = READY;
-		else feed = -PRELOAD_SPEED;
+		else feed = -config.motor_config.preload_speed;
 		break;
 	    case READY:
 		break;
 	    case ACTIVATING:
 		if (is_loaded) state = LOADING;
 		else if (! is_present) state = EMPTY;
-		else feed = LOADING_SPEED;
+		else feed = config.motor_config.loading_speed;
 		stepper->reset_n_steps();
 		break;
 	    case LOADING:
@@ -199,17 +228,17 @@ public:
 		if (! is_loaded && ! has_y_output) state = EMPTY;
 		else if (has_y_output) state = EARLY_ACTIVE_INIT;
 		// TODO: else if (buffer_is_empty) really short filament in here somewhere??
-		else feed = LOADING_SPEED;
+		else feed = config.motor_config.loading_speed;
 		break;
 	    case EARLY_ACTIVE_INIT:
-		active_init_until = stepper->get_n_steps() + (ACTIVE_INIT_MM * STEPS_PER_MM);
+		active_init_until = stepper->get_n_steps() + (ACTIVE_INIT_MM * config.motor_config.steps_per_mm);
 		state = EARLY_ACTIVE;
 		break;
 	    case EARLY_ACTIVE:
 		if (! is_loaded) state = EMPTYING;
 		else if (stepper->get_n_steps() >= active_init_until) state = ACTIVE;
 		else if (buffer_is_full) state = EARLY_ACTIVE_WAITING;
-		else feed = REFILL_SPEED;
+		else feed = config.motor_config.refill_speed;
 		break;
 	    case EARLY_ACTIVE_WAITING:
 		if (! is_loaded) state = EMPTYING;
@@ -218,7 +247,7 @@ public:
 	    case ACTIVE:
 		if (! is_loaded) state = EMPTYING;
 		else if (buffer_is_full) state = WAITING;
-		else feed = REFILL_SPEED;
+		else feed = config.motor_config.refill_speed;
 		break;
 	    case WAITING:
 		if (! is_loaded) state = EMPTYING;
@@ -273,7 +302,7 @@ public:
     void dump_state() {
 	printf("%s: %s", name, state_to_string(state));
 	lane_switches->dump_state();
-	if (is_active()) output_switches->dump_state();
+	if (is_active()) buffer_switches->dump_state();
 	printf(" << ");
 	stepper->dump_state();
 	printf(" >>");
@@ -309,7 +338,7 @@ public:
 private:
     const char *name;
     LaneSwitches *lane_switches;
-    OutputSwitches *output_switches;
+    BufferSwitches *buffer_switches;
     Stepper *stepper;
 
     int64_t active_init_until = 0;
@@ -359,41 +388,30 @@ private:
 
 static void configure_tmc(UART_Tx *tx, int address) {
     TMC2209 *tmc = new TMC2209(tx, address);
-    tmc->set_microstepping(microstepping);
+    tmc->set_microstepping(config.motor_config.microstepping);
     tmc->set_rms_current(600);
 }
 
-static Stepper *create_lane_1_stepper(UART_Tx *tx) {
-    Output *enable = new GPOutput(PIN_M1_EN);
-    Output *dir = new GPOutput(PIN_M1_DIR);
-    Output *step = new GPOutput(PIN_M1_STEP);
-    dir->set_is_inverted(M1_DIR_INVERT);
-    configure_tmc(tx, PIN_M1_ADDRESS);
-    Stepper *stepper = new Stepper(enable, dir, step, "stepper-1");
-    stepper->set_steps_per_mm(STEPS_PER_MM);
-    return stepper;
-}
-
-static Stepper *create_lane_2_stepper(UART_Tx *tx) {
-    Output *enable = new GPOutput(PIN_M2_EN);
-    Output *dir = new GPOutput(PIN_M2_DIR);
-    Output *step = new GPOutput(PIN_M2_STEP);
-    dir->set_is_inverted(M2_DIR_INVERT);
-    configure_tmc(tx, PIN_M2_ADDRESS);
-    Stepper *stepper = new Stepper(enable, dir, step, "stepper-2");
-    stepper->set_steps_per_mm(STEPS_PER_MM);
+static Stepper *create_lane_stepper(lane_config_t *config, motor_config_t *motor_config, const char *name, UART_Tx *tx) {
+    Output *enable = new GPOutput(config->enable);
+    Output *dir = new GPOutput(config->dir);
+    Output *step = new GPOutput(config->step);
+    dir->set_is_inverted(config->invert);
+    configure_tmc(tx, config->uart_address);
+    Stepper *stepper = new Stepper(enable, dir, step, name);
+    stepper->set_steps_per_mm(motor_config->steps_per_mm);
     return stepper;
 }
 
 class Coordinator : ThreadInterruptNotifier {
 public:
     Coordinator() : ThreadInterruptNotifier("coordinator") {
-	tx = pico_new_pio_uart_tx(TMC_UART_TX, 115200);
-	output_switches = new OutputSwitches(this);
-	lane_1_switches = new LaneSwitches(PIN_L1_IN, PIN_L1_OUT, this);
-	lane_2_switches = new LaneSwitches(PIN_L2_IN, PIN_L2_OUT, this);
-	lane_1 = new Lane(lane_1_switches, output_switches, create_lane_1_stepper(tx), "lane-1");
-	lane_2 = new Lane(lane_2_switches, output_switches, create_lane_2_stepper(tx), "lane-2");
+	tx = pico_new_pio_uart_tx(config.motor_config.tx, 115200);
+	buffer_switches = new BufferSwitches(&config.buffer, this);
+	lane_1_switches = new LaneSwitches(&config.lanes[0], this);
+	lane_2_switches = new LaneSwitches(&config.lanes[1], this);
+	lane_1 = new Lane(lane_1_switches, buffer_switches, create_lane_stepper(&config.lanes[0], &config.motor_config, "stepper-1", tx), "lane-1");
+	lane_2 = new Lane(lane_2_switches, buffer_switches, create_lane_stepper(&config.lanes[1], &config.motor_config, "stepper-2", tx), "lane-2");
 
 	update(true);
 
@@ -414,7 +432,7 @@ public:
     }
 
     void update(bool force = true) {
-	bool output_changed = output_switches->update();
+	bool output_changed = buffer_switches->update();
 	bool l1_changed = lane_1_switches->update();
 	bool l2_changed = lane_2_switches->update();
 
@@ -454,7 +472,7 @@ public:
 	printf(" || lane_2:");
 	lane_2_switches->dump_state();
 	printf(" || output:");
-	output_switches->dump_state();
+	buffer_switches->dump_state();
 	printf("\n");
     }
 
@@ -486,7 +504,7 @@ public:
 
 private:
     UART_Tx *tx;
-    OutputSwitches *output_switches;
+    BufferSwitches *buffer_switches;
     LaneSwitches *lane_1_switches;
     LaneSwitches *lane_2_switches;
     Lane *lane_1;
@@ -562,12 +580,12 @@ static void threads_main(int argc, char **argv) {
 		coordinator->resume();
 	    } else if (strncmp(line, "feed", 5) == 0) {
 		int lane = -1;
-		int speed = LOADING_SPEED;
+		int speed = config.motor_config.loading_speed;
 		sscanf(&line[4], "%d %d", &lane, &speed);
 		coordinator->feed(lane, speed);
 	    } else if (strncmp(line, "retract", 7) == 0) {
 		int lane = -1;
-		int speed = LOADING_SPEED;
+		int speed = config.motor_config.loading_speed;
 		sscanf(&line[7], "%d %d", &lane, &speed);
 		coordinator->retract(lane, speed);
 	    } else if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) {
