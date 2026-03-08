@@ -279,6 +279,11 @@ public:
 	return state == READY;
     }
 
+    void emptying() {
+	state = EMPTYING;
+	update();
+    }
+
     void activate() {
 	assert (state == READY);
 	state = ACTIVATING;
@@ -393,6 +398,14 @@ public:
 	lane_2_switches = new LaneSwitches(&config.lanes[1], this);
 	lane_1 = new Lane(lane_1_switches, buffer_switches, create_lane_stepper(&config.lanes[0], &config.motor_config, "stepper-1", tx), "lane-1");
 	lane_2 = new Lane(lane_2_switches, buffer_switches, create_lane_stepper(&config.lanes[1], &config.motor_config, "stepper-2", tx), "lane-2");
+
+	if (! lane_1_switches->is_loaded() && ! lane_2_switches->is_loaded() && buffer_switches->has_y_output()) {
+	    // Special case, neither lane is active but one of them was active
+	    // when we last stopped running.  Since we don't know which one is
+	    // supposed to active, move them both to emptying
+	    lane_1->emptying();
+	    lane_2->emptying();
+	}
 
 	update(true);
 
