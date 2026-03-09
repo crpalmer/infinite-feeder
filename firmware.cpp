@@ -23,6 +23,7 @@ typedef struct {
 
 typedef struct {
     int	    tx, rx;
+    int	    rms_current;
     int	    microstepping;
     int	    steps_per_mm;
     int	    preload_speed;
@@ -63,6 +64,7 @@ static config_t config = {
     },
     {
 	.tx = 8, .rx = 9,
+	.rms_current = 850,
 	.microstepping = 4,
 	.steps_per_mm = 680,
 	.preload_speed = 5,
@@ -389,7 +391,7 @@ private:
 static void configure_tmc(UART_Tx *tx, int address) {
     TMC2209 *tmc = new TMC2209(tx, address);
     tmc->set_microstepping(config.motor_config.microstepping * config.motor_config.steps_per_mm / 16);
-    tmc->set_rms_current(600);
+    tmc->set_rms_current(config.motor_config.rms_current);
 }
 
 static Stepper *create_lane_stepper(lane_config_t *config, motor_config_t *motor_config, const char *name, UART_Tx *tx) {
