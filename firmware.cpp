@@ -64,7 +64,7 @@ static config_t config = {
     {
 	.tx = 8, .rx = 9,
 	.microstepping = 4,
-	.steps_per_mm = 680/4,
+	.steps_per_mm = 680,
 	.preload_speed = 5,
 	.loading_speed = 20,
 	.refill_speed = 10
@@ -388,7 +388,7 @@ private:
 
 static void configure_tmc(UART_Tx *tx, int address) {
     TMC2209 *tmc = new TMC2209(tx, address);
-    tmc->set_microstepping(config.motor_config.microstepping);
+    tmc->set_microstepping(config.motor_config.microstepping * config.motor_config.steps_per_mm / 16);
     tmc->set_rms_current(600);
 }
 
