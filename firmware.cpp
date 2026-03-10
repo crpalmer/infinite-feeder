@@ -1,8 +1,11 @@
 #include "pi.h"
 #include <cstring>
 #include <math.h>
+#include <limits.h>
+#include "fram-at24c.h"
 #include "gp-input.h"
 #include "gp-output.h"
+#include "i2c.h"
 #include "pi-threads.h"
 #include "stepper.h"
 #include "string-utils.h"
@@ -36,13 +39,21 @@ typedef struct {
     int	    full, empty;
 } buffer_config_t;
 
+static const char MAGIC[8] = "InfFeed";
+
 typedef struct {
+    char magic[8];
+    int version;
     lane_config_t   lanes[2];
     motor_config_t  motor_config;
     buffer_config_t buffer;
 } config_t;
 
-static config_t config = {
+static int CONFIG_VERSION = 1;
+
+static config_t factory_config = {
+    .magic = { MAGIC[0], MAGIC[1], MAGIC[2], MAGIC[3], MAGIC[4], MAGIC[5], MAGIC[6], MAGIC[7] },
+    .version = CONFIG_VERSION,
     {
 	{
 	    .present = 26,
@@ -77,6 +88,126 @@ static config_t config = {
 	.empty = 22
     },
 };
+
+static config_t config = factory_config;
+
+class PersistentStorage {
+public:
+    PersistentStorage() {
+	i2c_init_bus(I2C_BUS, I2C_SDA, I2C_SCL);
+	fram = new FRAM_AT24C(0);
+    }
+
+    bool load(config_t *c) {
+	config_t new_c;
+	if (! fram->read(CONFIG_OFFSET, &new_c, sizeof(new_c))) return false;
+	if (strcmp(MAGIC, new_c.magic) != 0) return false;
+	//
+	// Upgrade old configurations
+
+	if (new_c.version != CONFIG_VERSION) {
+	    printf("Loaded version %d of the configuration (should be %d)\n", new_c.version, CONFIG_VERSION);
+	    return false;
+	}
+
+	*c = new_c;
+	return true;
+    }
+
+    bool save(config_t *c) {
+	if (! fram->write(CONFIG_OFFSET, c, sizeof(*c))) return false;
+	pi_reboot();
+	return true;
+    }
+
+private:
+    FRAM *fram;
+
+    static const int I2C_BUS = 0;
+    static const int I2C_SDA = 0;
+    static const int I2C_SCL = 1;
+    static const int CONFIG_OFFSET = 0;
+};
+
+static PersistentStorage *storage;
+
+static void read_int(bool validate_only, const char *prompt, int *value, int min = -INT_MAX, int max = INT_MAX) {
+    char line[128];
+    int new_value;
+
+    if (validate_only) {
+	new_value = *value;
+    } else {
+	printf("%s [%3d]: ", prompt, *value);
+	pi_readline(line, sizeof(line));
+	if (sscanf(line, "%d", &new_value) != 1) {
+	    printf("No number entered.\n");
+	    return;
+	}
+    }
+
+    if (new_value < min || new_value > max) {
+	printf("%d is out of range %d..%d\n", new_value, min, max);
+    } else {
+	*value = new_value;
+	printf("%s = %d\n", prompt, *value);
+    }
+}
+
+static void read_pin(bool validate_only, const char *prompt, int *value) {
+    read_int(validate_only, prompt, value, 0, 29);
+}
+
+static void read_bool(bool validate_only, const char *prompt, bool *value) {
+    int v = *value;
+    read_int(validate_only, prompt, &v, 0, 1);
+    *value = v;
+}
+
+static void set_lane_config(int id, lane_config_t *c, bool validate_only = false) {
+    printf("Lane %d configuration:\n", id);
+    printf("----------------------\n\n");
+    read_pin (validate_only, "  Filament present pin", &c->present);
+    read_pin (validate_only, "   Filament loaded pin", &c->loaded);
+    read_pin (validate_only, "          Motor EN pin", &c->enable);
+    read_pin (validate_only, "         Motor DIR pin", &c->dir);
+    read_pin (validate_only, "        Motor STEP pin", &c->step);
+    read_pin (validate_only, "  TMC2209 UART Address", &c->uart_address);
+    read_bool(validate_only, "Invert motor direction", &c->invert);
+}
+
+static void set_motor_config(motor_config_t *c, bool validate_only = false) {
+    printf("General Motor Configuration:\n");
+    printf("----------------------------\n\n");
+    read_pin(validate_only, "                    UART Tx pin", &c->tx);
+    read_pin(validate_only, "                    UART Rx pin", &c->rx);
+    read_int(validate_only, "               RMS current (mA)", &c->rms_current, 0, 1500);
+    read_int(validate_only, "                  Microstepping", &c->microstepping, 1, 256);
+    read_int(validate_only, "                       Steps/mm",  &c->steps_per_mm, 1);
+    read_int(validate_only, "      Preloading speed (mm/sec)", &c->preload_speed, 1, 100);
+    read_int(validate_only, "         Loading speed (mm/sec)", &c->loading_speed, 1, 100);
+    read_int(validate_only, "Buffer refilling speed (mm/sec)", &c->refill_speed, 1, 100);
+}
+
+static void set_buffer_config(buffer_config_t *c, bool validate_only = false) {
+    printf("Filament Buffer Configuration:\n");
+    printf("------------------------------\n\n");
+    read_pin(validate_only, "Input pin", &c->input);
+    read_pin(validate_only, " Full pin", &c->full);
+    read_pin(validate_only, "Empty pin", &c->empty);
+}
+
+static void set_all_config(config_t *c, bool validate_only = false) {
+    printf("\n");
+    set_lane_config(1, &c->lanes[0], validate_only);
+    printf("\n");
+    set_lane_config(2, &c->lanes[1], validate_only);
+    printf("\n");
+    set_motor_config(&c->motor_config, validate_only);
+    printf("\n");
+    set_buffer_config(&c->buffer, validate_only);
+    if (! validate_only) storage->save(c);
+}
 
 // -------------------------- END CONFIG --------------------------
 
@@ -545,6 +676,8 @@ private:
 static void threads_main(int argc, char **argv) {
     ms_sleep(2000);
     printf("Starting\n");
+    storage = new PersistentStorage();
+    if (! storage->load(&config)) printf("FAILED to load existing configuration\n");
     Coordinator *coordinator = new Coordinator();
     StateDumper *state_dumper = new StateDumper(coordinator);
 
@@ -582,17 +715,53 @@ static void threads_main(int argc, char **argv) {
 		int speed = config.motor_config.loading_speed;
 		sscanf(&line[7], "%d %d", &lane, &speed);
 		coordinator->retract(lane, speed);
+	    } else if (strcmp(line, "factory-reset") == 0) {
+		storage->save(&factory_config);
+	    } else if (strcmp(line, "show") == 0 || strcmp(line, "config") == 0) {
+		set_all_config(&config, true);
+	    } else if (strncmp(line, "set ", 4) == 0 || strncmp(line, "show ", 5) == 0) {
+		bool validate_only = strncmp(line, "show ", 5) == 0;
+		const char *what = &line[validate_only ? 5 : 4];
+		bool dirty = true;
+
+		if (strcmp(what, "all") == 0) {
+		    set_all_config(&config, validate_only);
+		    dirty = false;
+		} else if (strcmp(what, "lane_1") == 0) {
+		    set_lane_config(1, &config.lanes[0], validate_only);
+		} else if (strcmp(what, "lane_2") == 0) {
+		    set_lane_config(2, &config.lanes[1], validate_only);
+		} else if (strcmp(what, "motor") == 0) {
+		    set_motor_config(&config.motor_config, validate_only);
+		} else if (strcmp(what, "buffer") == 0) {
+		    set_buffer_config(&config.buffer, validate_only);
+		} else {
+		    printf("Invalid configuration category: '%s'\n", what);
+		    dirty = false;
+		}
+		if (dirty) {
+		    storage->save(&config);
+		}
 	    } else if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) {
-		printf("bootsel: reboot to bootloader mode\n");
-		printf("state: dump state\n");
-		printf("threads: dump thread state\n");
-		printf("\n");
+		printf("\nConfiguration:");
+		printf("\n--------------\n");
+		printf("set (all | lane_1 | lane_2 | motor | buffer): modify configuration\n");
+		printf("show [all | lane_1 | lane_2 | motor | buffer]: show configuration\n");
+		printf("config : show full configuration\n");
+		printf("factory-reset\n");
+		printf("\nInfinite Feeder Control:");
+		printf("\n------------------------\n");
 		printf("active: exit stop / early feeding to move to active\n");
 		printf("stop: switch to manual processing\n");
 		printf("feed [lane [speed]]: cause a lane to start feeding filament\n");
 		printf("retract [lane [speed]]: cause a lane to start retracting filament\n");
 		printf("resume: go back to normal processing\n");
-	    } else {
+		printf("\nPico Control:");
+		printf("\n-------------\n");
+		printf("bootsel: reboot to bootloader mode\n");
+		printf("state: dump state\n");
+		printf("threads: dump thread state\n");
+	    } else if (line[0]) {
 		printf("help or ? for usage\n");
 	    }
 	}
