@@ -1,14 +1,18 @@
 #include "pi.h"
-#include "fram-at24c.h"
+#include "fram-mb85c.h"
 #include "i2c.h"
 #include "time-utils.h"
+
+static const size_t n = 32768/2;
+static uint16_t data[n];
+static uint16_t data2[n];
 
 static bool validate(uint16_t *d1, uint16_t *d2, size_t n) {
     int failures = 0;
 
     for (size_t i = 0; i < n; i++) {
 	if (d1[i] != d2[i]) {
-	    printf("Invalid value @ %d: %d != %d\n", (int) i, d1[i], d2[i]);
+	    printf("Invalid value @ %d: written %d != %d read\n", (int) i, d1[i], d2[i]);
 	    if (++failures > 10) return false;
 	}
     }
@@ -21,13 +25,12 @@ int main(int argc, char **argv) {
     ms_sleep(2000);
 
     i2c_init_bus(0, 0, 1);
-    FRAM *fram = new FRAM_AT24C(0);
+    FRAM *fram = new FRAM_MB85C(0);
 
-    size_t n = 128;
-    uint16_t data[n];
-    uint16_t data2[n];
-
-    for (size_t i = 0; i < n; i++) data[i] = i;
+    for (size_t i = 0; i < n; i++) {
+	data[i] = i+5000;
+	data2[i] = 0xff;
+    }
 
     if (! fram->write(0, data, sizeof(data))) {
 	printf("write failure\n");
