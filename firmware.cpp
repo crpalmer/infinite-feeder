@@ -505,7 +505,7 @@ private:
 
 static void configure_tmc(UART_Tx *tx, int address) {
     TMC2209 *tmc = new TMC2209(tx, address);
-    tmc->set_microstepping(config.motor_config.microstepping * config.motor_config.steps_per_mm / 16);
+    tmc->set_microstepping(config.motor_config.microstepping);
     tmc->set_rms_current(config.motor_config.rms_current);
 }
 
@@ -516,7 +516,7 @@ static Stepper *create_lane_stepper(lane_config_t *config, motor_config_t *motor
     dir->set_is_inverted(config->invert);
     configure_tmc(tx, config->uart_address);
     Stepper *stepper = new Stepper(enable, dir, step, name);
-    stepper->set_steps_per_mm(motor_config->steps_per_mm);
+    stepper->set_steps_per_mm(motor_config->steps_per_mm * motor_config->microstepping / 16);
     return stepper;
 }
 
