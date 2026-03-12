@@ -403,7 +403,7 @@ public:
 
 public:
     bool is_active() {
-	return state > READY;
+	return state > READY && state < STOP;
     }
 
     bool is_ready() {
