@@ -2,7 +2,8 @@
 #include <cstring>
 #include <math.h>
 #include <limits.h>
-#include "fram-at24c.h"
+#include "commands.h"
+#include "fram-mb85c.h"
 #include "gp-input.h"
 #include "gp-output.h"
 #include "i2c.h"
@@ -12,7 +13,7 @@
 #include "thread-interrupt-notifier.h"
 #include "time-utils.h"
 #include "tmc2209.h"
-#include "uart.h"
+#include "uart-channel.h"
 
 typedef struct {
     int	    present;
@@ -93,12 +94,31 @@ static config_t config = factory_config;
 
 class PersistentStorage {
 public:
-    PersistentStorage() {
-	i2c_init_bus(I2C_BUS, I2C_SDA, I2C_SCL);
-	fram = new FRAM_AT24C(0);
+    ~PersistentStorage() { }
+    virtual bool load(config_t *c) = 0;
+    virtual bool save(config_t *c) = 0;
+};
+
+class PicoPersistentStorage : public PersistentStorage {
+public:
+    bool load(config_t *c) override {
+	*c = factory_config;
+	return true;
     }
 
-    bool load(config_t *c) {
+    bool save(config_t *c) override {
+	return false;
+    }
+};
+
+class FRAMPersistentStorage : public PersistentStorage {
+public:
+    FRAMPersistentStorage() {
+	i2c_init_bus(I2C_BUS, I2C_SDA, I2C_SCL);
+	fram = new FRAM_MB85C(I2C_BUS);
+    }
+
+    bool load(config_t *c) override {
 	config_t new_c;
 	if (! fram->read(CONFIG_OFFSET, &new_c, sizeof(new_c))) return false;
 	if (strcmp(MAGIC, new_c.magic) != 0) return false;
@@ -114,10 +134,15 @@ public:
 	return true;
     }
 
-    bool save(config_t *c) {
+    bool save(config_t *c) override {
 	if (! fram->write(CONFIG_OFFSET, c, sizeof(*c))) return false;
 	pi_reboot();
 	return true;
+    }
+
+    static bool exists() {
+	i2c_init_bus(I2C_BUS, I2C_SDA, I2C_SCL);
+	return (i2c_exists(I2C_BUS, 0x50));
     }
 
 private:
@@ -673,10 +698,90 @@ private:
     bool enabled = false;
 };
 
+class Channel : public UARTChannel {
+public:
+    Channel(int tx_pin, int rx_pin) : UARTChannel(tx_pin, rx_pin) {
+	lock = new PiMutex();
+	pong = new PiCond();
+    }
+
+    void send_command(int cmd, const void *data = NULL, int n_data = 0) override {
+	lock->lock();
+	send_command_locked(cmd, data, n_data);
+	lock->unlock();
+    }
+
+    void on_command(int _cmd, const void *data, int n_data) override {
+        cmd_t cmd = (cmd_t) _cmd;
+        switch(cmd) {
+        case CMD_PING:
+	    send_command(CMD_PONG);
+	    break;
+        case CMD_PONG:
+	    pong->broadcast();
+	    break;
+        }
+    }
+
+    bool ping(int wait_ms = -1) {
+	bool ret = false;
+
+	lock->lock();
+	send_command_locked(CMD_PING);
+	if (wait_ms >= 0) {
+	    ret = pong->wait_for(lock, wait_ms * 1000);
+	}
+	lock->unlock();
+
+	return ret;
+    }
+
+private:
+    void send_command_locked(int cmd, const void *data = NULL, int n_data = 0) {
+	UARTChannel::send_command(cmd, data, n_data);
+    }
+
+private:
+    PiMutex *lock;
+    PiCond *pong;
+    bool made_contact = false;
+};
+
+class ChannelProber : public PiThread {
+public:
+    ChannelProber(Channel *channel) : PiThread("channel-prober"), channel(channel) {
+	start();
+    }
+
+    void main(void) override {
+	uint64_t n_tries = 0;
+
+	printf("channel-prober: running, trying to contact the remote pico\n");
+	while (! channel->ping(1000)) {
+	    if ((n_tries++ % 50) == 0) printf("channel-prober: still trying.\n");
+	}
+	printf("channel: contact initiated, exiting\n");
+    }
+
+private:
+    Channel *channel;
+};
+
 static void threads_main(int argc, char **argv) {
     ms_sleep(2000);
     printf("Starting\n");
-    storage = new PersistentStorage();
+    Channel *channel = NULL;
+
+    if (FRAMPersistentStorage::exists()) {
+	printf("FRAM exists, using it for persistent storage\n");
+	storage = new FRAMPersistentStorage();
+    } else {
+	printf("FRAM doesn't exist, trying to talk to a pico for persistent storage.\n");
+	channel = new Channel(0, 1);
+	new ChannelProber(channel);
+	storage = new PicoPersistentStorage();
+    }
+
     if (! storage->load(&config)) printf("FAILED to load existing configuration\n");
     Coordinator *coordinator = new Coordinator();
     StateDumper *state_dumper = new StateDumper(coordinator);
@@ -686,7 +791,11 @@ static void threads_main(int argc, char **argv) {
 	static char line[1024];
 
 	if (pi_readline(line, sizeof(line)) != NULL) {
-	    if (strcmp(line, "bootsel") == 0) {
+	    if (strcmp(line, "ping") == 0) {
+		if (! channel) printf("cannot ping, there is no pico connected.\n");
+		else if (channel->ping(1000)) printf("pong received\n");
+		else printf("*** PONG NOT RECEIVED\n");
+	    } else if (strcmp(line, "bootsel") == 0) {
 		printf("Rebooting to bootloader.\n"); fflush(stdout);
 		pi_reboot_bootloader();
 	    } else if (strcmp(line, "state") == 0) {
@@ -722,7 +831,7 @@ static void threads_main(int argc, char **argv) {
 	    } else if (strncmp(line, "set ", 4) == 0 || strncmp(line, "show ", 5) == 0) {
 		bool validate_only = strncmp(line, "show ", 5) == 0;
 		const char *what = &line[validate_only ? 5 : 4];
-		bool dirty = true;
+		bool dirty = ! validate_only;
 
 		if (strcmp(what, "all") == 0) {
 		    set_all_config(&config, validate_only);

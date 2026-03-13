@@ -13,6 +13,7 @@ set(CMAKE_CXX_STANDARD 17)
 add_subdirectory(lib)
 
 add_executable(firmware firmware.cpp
+    uart-channel.cpp
 )
 
 target_link_libraries(firmware 
@@ -23,6 +24,19 @@ target_link_libraries(firmware
 pico_enable_stdio_usb(firmware 1)
 pico_enable_stdio_uart(firmware 0)
 pico_add_extra_outputs(firmware)
+
+add_executable(pico pico.cpp
+    uart-channel.cpp
+)
+
+target_link_libraries(pico
+    lib-pi
+    lib-pi-threads
+)
+
+pico_enable_stdio_usb(pico 1)
+pico_enable_stdio_uart(pico 0)
+pico_add_extra_outputs(pico)
 
 add_executable(test test.cpp
 )
