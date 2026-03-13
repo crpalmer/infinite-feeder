@@ -56,7 +56,7 @@ static config_t factory_config = {
     .version = CONFIG_VERSION,
     {
 	{
-	    .present = 26,
+	    .present = 22,
 	    .loaded = 27,
 	    .enable = 15,
 	    .dir = 13,
@@ -64,8 +64,8 @@ static config_t factory_config = {
 	    .uart_address = 3,
 	    .invert = false },
 	{
-	    .present = 4,
-	    .loaded = 3,
+	    .present = 3,
+	    .loaded =  25,
 	    .enable = 12,
 	    .dir = 10,
 	    .step = 11,
@@ -83,9 +83,9 @@ static config_t factory_config = {
 	.refill_speed = 10
     },
     {
-	.input = 25,
-	.full = 16,
-	.empty = 22
+	.input = 16,
+	.full = 26,
+	.empty = 4
     },
 };
 
