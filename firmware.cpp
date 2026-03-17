@@ -38,8 +38,13 @@ typedef struct {
 typedef struct {
     int	    input;
     int	    full, empty;
-    int	    mm_to_load, mm_to_retry, mm_to_load2;
 } buffer_config_t;
+
+typedef struct {
+    int	    mm_to_load, mm_to_retry, mm_to_load2;
+    int	    y_output_timeout_us;
+    int	    y_output_retract_mm;
+} error_config_t;
 
 static const char MAGIC[8] = "InfFeed";
 
@@ -49,6 +54,7 @@ typedef struct {
     lane_config_t   lanes[2];
     motor_config_t  motor_config;
     buffer_config_t buffer;
+    error_config_t  error;
 } config_t;
 
 static int CONFIG_VERSION = 1;
@@ -88,9 +94,13 @@ static config_t factory_config = {
 	.input = 16,
 	.full = 26,
 	.empty = 4,
+    },
+    {
 	.mm_to_load = 200,
 	.mm_to_retry = 50,
 	.mm_to_load2 = 100,
+	.y_output_timeout_us = 5*1000*1000,
+	.y_output_retract_mm = 20,
     },
 };
 
@@ -224,9 +234,14 @@ static void set_buffer_config(buffer_config_t *c, bool validate_only = false) {
     read_pin(validate_only, "  Input pin", &c->input);
     read_pin(validate_only, "   Full pin", &c->full);
     read_pin(validate_only, "  Empty pin", &c->empty);
-    read_int(validate_only, " MM to load", &c->mm_to_load);
-    read_int(validate_only, "MM to retry", &c->mm_to_retry);
-    read_int(validate_only, "MM to load2", &c->mm_to_load2);
+}
+
+static void set_error_config(error_config_t *c, bool validate_only = false) {
+    read_int(validate_only, "           MM to load", &c->mm_to_load);
+    read_int(validate_only, "          MM to retry", &c->mm_to_retry);
+    read_int(validate_only, "          MM to load2", &c->mm_to_load2);
+    read_int(validate_only, "y output timeout (us)", &c->y_output_timeout_us);
+    read_int(validate_only, "y output retract (mm)", &c->y_output_retract_mm);
 }
 
 static void set_all_config(config_t *c, bool validate_only = false) {
@@ -238,6 +253,8 @@ static void set_all_config(config_t *c, bool validate_only = false) {
     set_motor_config(&c->motor_config, validate_only);
     printf("\n");
     set_buffer_config(&c->buffer, validate_only);
+    printf("\n");
+    set_error_config(&c->error, validate_only);
     if (! validate_only) storage->save(c);
 }
 
@@ -395,7 +412,7 @@ public:
 		if (is_loaded) {
 		    state = LOADING;
 		    stepper->reset_mm_moved();
-		    mm_to_load = config.buffer.mm_to_load;
+		    target_mm = config.error.mm_to_load;
 		} else {
 		    feed = config.motor_config.loading_speed;
 		}
@@ -406,8 +423,10 @@ public:
 		    state = EMPTY;
 		} else if (has_y_output) {
 		    state = ACTIVE;
-		} else if (stepper->get_mm_moved() >= mm_to_load) {
-		    mm_to_load = stepper->get_mm_moved() - config.buffer.mm_to_retry;
+		    target_mm = stepper->get_mm_moved() + 50;
+		    wait_until = us_now() + config.error.y_output_timeout_us;
+		} else if (buffer_is_full || stepper->get_mm_moved() >= target_mm) {
+		    target_mm = stepper->get_mm_moved() - config.error.mm_to_retry;
 		    state = LOADING_RETRACT;
 		    n_buffer_retries++;
 		} else {
@@ -417,10 +436,10 @@ public:
 		break;
 	    case LOADING_RETRACT:
 		if (! is_loaded) {
-		    mm_to_load = stepper->get_mm_moved() + config.buffer.mm_to_load;
+		    target_mm = stepper->get_mm_moved() + config.error.mm_to_load;
 		    state = LOADING;
-		} else if (stepper->get_mm_moved() <= mm_to_load) {
-		    mm_to_load = stepper->get_mm_moved() + config.buffer.mm_to_retry + config.buffer.mm_to_load2;
+		} else if (stepper->get_mm_moved() <= target_mm) {
+		    target_mm = stepper->get_mm_moved() + config.error.mm_to_retry + config.error.mm_to_load2;
 		    state = LOADING;
 		} else {
 		    feed = -config.motor_config.loading_speed;
@@ -432,9 +451,31 @@ public:
 		else if (buffer_is_full) state = WAITING;
 		else feed = config.motor_config.refill_speed;
 		break;
-	    case WAITING:
-		if (! is_loaded) state = EMPTYING;
-		else if (buffer_is_empty) state = ACTIVE;
+	    case WAITING: {
+		us_time_t now = us_now();
+		if (! is_loaded) {
+		    state = EMPTYING;
+		} else if (buffer_is_empty) {
+		    state = ACTIVE;
+		} else if (buffer_is_full && stepper->get_mm_moved() < target_mm) {
+		    if (now >= wait_until) {
+			target_mm = stepper->get_mm_moved() - config.error.y_output_retract_mm;
+			state = ACTIVE_RETRACT;
+			n_y_retries++;
+		    } else {
+			polling_us = wait_until - now;
+		    }
+		}
+		break;
+	    }
+	    case ACTIVE_RETRACT:
+		if (stepper->get_mm_moved() <= target_mm) {
+		    state = ACTIVE;
+		    wait_until = us_now() + config.error.y_output_timeout_us;
+		} else {
+		    feed = -config.motor_config.loading_speed;
+		    polling_us = 100*1000;
+		}
 		break;
 	    case EMPTYING:
 		if (! has_y_output) state = EMPTY;
@@ -491,6 +532,8 @@ public:
     void dump_state() {
 	printf("%s: %s", name, state_to_string(state));
 	if (n_buffer_retries) printf(" || %d buffer retries", n_buffer_retries);
+	if (n_y_retries) printf(" || %d y retries", n_y_retries);
+	if (wait_until > us_now()) printf(" [wait %d ms]", (int) (wait_until - us_now()) / 1000);
 	lane_switches->dump_state();
 	if (is_active()) buffer_switches->dump_state();
 	printf(" << ");
@@ -529,14 +572,15 @@ private:
 
     us_time_t preloading_started_at = 0;
     int manual_feed = 0;
-    int mm_to_load = 0;
-    int n_buffer_retries = 0;
+    int target_mm = 0;
+    us_time_t wait_until = 0;
+    int n_buffer_retries = 0, n_y_retries = 0;
 
     enum State {
 	    INIT,
 	    EMPTY, PRE_LOADING, PRE_LOADING_RETRACT, PRE_LOADING_ERROR, READY,
 	    ACTIVATING, LOADING, LOADING_RETRACT,
-	    ACTIVE, WAITING,
+	    ACTIVE, WAITING, ACTIVE_RETRACT,
 	    EMPTYING,
 	    STOP, FEED, FEED_WAITING, RETRACT, RETRACT_WAITING
 	} state = INIT;
@@ -555,6 +599,7 @@ private:
 	case LOADING_RETRACT: return "loading(retract)";
 	case ACTIVE: return "active";
 	case WAITING: return "waiting";
+	case ACTIVE_RETRACT: return "active(retract)";
 	case EMPTYING: return "emptying";
 	case STOP: return "stop";
 	case FEED: return "feed";
@@ -568,7 +613,7 @@ private:
     inline void trace_state(enum State old_state) {
 	if (state != old_state) {
 	    printf("%s: %s => %s", name, state_to_string(old_state), state_to_string(state));
-	    if (old_state < ACTIVE && state >= ACTIVE) {
+	    if (old_state == ACTIVATING || (old_state < ACTIVE && state >= ACTIVE)) {
 		printf(" | ");
 		dump_state();
 	    }
@@ -889,6 +934,7 @@ static void threads_main(int argc, char **argv) {
 		coordinator->dump_state();
 	    } else if (strcmp(line, "threads") == 0 || strcmp(line, "t") == 0) {
 		pi_threads_dump_state();
+		printf("%d bytes free memory.\n", pi_threads_get_free_ram());
 	    } else if (strncmp(line, "state-dumper", 12) == 0 || strcmp(line, "s") == 0) {
 		int enabled = true;
 		sscanf(&line[12], "%d", &enabled);
