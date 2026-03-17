@@ -367,18 +367,27 @@ public:
 		break;
 
 	    case EMPTY:
-		if (is_present) state = PRE_LOADING;
+		if (is_present) {
+		    preloading_started_at = us_now();
+		    state = PRE_LOADING;
+		}
 		break;
 	    case PRE_LOADING:
-		// TODO: add a timeout
 		if (! is_present) state = EMPTY;
 		else if (is_loaded) state = PRE_LOADING_RETRACT;
-		else feed = config.motor_config.preload_speed;
+		else if (us_elapsed_ms_now(&preloading_started_at) > 30*1000) state = PRE_LOADING_ERROR;
+		else {
+		    feed = config.motor_config.preload_speed;
+		    polling_us = 1000*1000;
+		}
 		break;
 	    case PRE_LOADING_RETRACT:
 		if (! is_present) state = EMPTY;
 		else if (! is_loaded) state = READY;
 		else feed = -config.motor_config.preload_speed;
+		break;
+	    case PRE_LOADING_ERROR:
+		if (! is_present) state = EMPTY;
 		break;
 	    case READY:
 		break;
@@ -518,13 +527,14 @@ private:
     BufferSwitches *buffer_switches;
     Stepper *stepper;
 
+    us_time_t preloading_started_at = 0;
     int manual_feed = 0;
     int mm_to_load = 0;
     int n_buffer_retries = 0;
 
     enum State {
 	    INIT,
-	    EMPTY, PRE_LOADING, PRE_LOADING_RETRACT, READY,
+	    EMPTY, PRE_LOADING, PRE_LOADING_RETRACT, PRE_LOADING_ERROR, READY,
 	    ACTIVATING, LOADING, LOADING_RETRACT,
 	    ACTIVE, WAITING,
 	    EMPTYING,
@@ -538,6 +548,7 @@ private:
 	case EMPTY: return "empty";
 	case PRE_LOADING: return "pre-loading";
 	case PRE_LOADING_RETRACT: return "pre-loading(retract)";
+	case PRE_LOADING_ERROR: return "pre-loading(error)";
 	case READY: return "ready";
 	case ACTIVATING: return "activating";
 	case LOADING: return "loading";
