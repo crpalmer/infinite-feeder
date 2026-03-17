@@ -38,6 +38,7 @@ typedef struct {
 typedef struct {
     int	    input;
     int	    full, empty;
+    int	    mm_to_load, mm_to_retry, mm_to_load2;
 } buffer_config_t;
 
 static const char MAGIC[8] = "InfFeed";
@@ -86,7 +87,10 @@ static config_t factory_config = {
     {
 	.input = 16,
 	.full = 26,
-	.empty = 4
+	.empty = 4,
+	.mm_to_load = 200,
+	.mm_to_retry = 50,
+	.mm_to_load2 = 100,
     },
 };
 
@@ -217,9 +221,12 @@ static void set_motor_config(motor_config_t *c, bool validate_only = false) {
 static void set_buffer_config(buffer_config_t *c, bool validate_only = false) {
     printf("Filament Buffer Configuration:\n");
     printf("------------------------------\n\n");
-    read_pin(validate_only, "Input pin", &c->input);
-    read_pin(validate_only, " Full pin", &c->full);
-    read_pin(validate_only, "Empty pin", &c->empty);
+    read_pin(validate_only, "  Input pin", &c->input);
+    read_pin(validate_only, "   Full pin", &c->full);
+    read_pin(validate_only, "  Empty pin", &c->empty);
+    read_int(validate_only, " MM to load", &c->mm_to_load);
+    read_int(validate_only, "MM to retry", &c->mm_to_retry);
+    read_int(validate_only, "MM to load2", &c->mm_to_load2);
 }
 
 static void set_all_config(config_t *c, bool validate_only = false) {
@@ -336,7 +343,7 @@ public:
     Lane(LaneSwitches *lane_switches, BufferSwitches *buffer_switches, Stepper *stepper, const char *name) : name(name), lane_switches(lane_switches), buffer_switches(buffer_switches), stepper(stepper) {
     }
 
-    void update() {
+    us_time_t update() {
 	bool is_present = lane_switches->is_present();
         bool is_loaded = lane_switches->is_loaded();
 	bool buffer_is_full = buffer_switches->buffer_is_full();
@@ -345,10 +352,12 @@ public:
 
 	int feed;
 	enum State old_state;
+	us_time_t polling_us;
 
 	do {
 	    feed = 0;
 	    old_state = state;
+	    polling_us = 0;
 
 	    switch (state) {
 	    case INIT:
@@ -374,17 +383,40 @@ public:
 	    case READY:
 		break;
 	    case ACTIVATING:
-		if (is_loaded) state = LOADING;
-		else if (! is_present) state = EMPTY;
-		else feed = config.motor_config.loading_speed;
-		stepper->reset_n_steps();
+		if (is_loaded) {
+		    state = LOADING;
+		    stepper->reset_mm_moved();
+		    mm_to_load = config.buffer.mm_to_load;
+		} else {
+		    feed = config.motor_config.loading_speed;
+		}
 		break;
 	    case LOADING:
-		// TODO: add a timeout in case the filament just isn't loadable and then do something (what??)
-		if (! is_loaded && ! has_y_output) state = EMPTY;
-		else if (has_y_output) state = ACTIVE;
-		// TODO: else if (buffer_is_empty) really short filament in here somewhere??
-		else feed = config.motor_config.loading_speed;
+		// TODO: if (buffer_is_empty) really short filament in here somewhere??
+		if (! is_loaded && ! has_y_output) {
+		    state = EMPTY;
+		} else if (has_y_output) {
+		    state = ACTIVE;
+		} else if (stepper->get_mm_moved() >= mm_to_load) {
+		    mm_to_load = stepper->get_mm_moved() - config.buffer.mm_to_retry;
+		    state = LOADING_RETRACT;
+		    n_buffer_retries++;
+		} else {
+		    feed = config.motor_config.loading_speed;
+		    polling_us = 500*1000;
+		}
+		break;
+	    case LOADING_RETRACT:
+		if (! is_loaded) {
+		    mm_to_load = stepper->get_mm_moved() + config.buffer.mm_to_load;
+		    state = LOADING;
+		} else if (stepper->get_mm_moved() <= mm_to_load) {
+		    mm_to_load = stepper->get_mm_moved() + config.buffer.mm_to_retry + config.buffer.mm_to_load2;
+		    state = LOADING;
+		} else {
+		    feed = -config.motor_config.loading_speed;
+		    polling_us = 100*1000;
+		}
 		break;
 	    case ACTIVE:
 		if (! is_loaded) state = EMPTYING;
@@ -424,6 +456,7 @@ public:
         } while (state != old_state);
 
 	stepper->set_speed(feed);
+	return polling_us;
     }
 
 public:
@@ -435,19 +468,20 @@ public:
 	return state == READY;
     }
 
-    void emptying() {
+    us_time_t emptying() {
 	state = EMPTYING;
-	update();
+	return update();
     }
 
-    void activate() {
+    us_time_t activate() {
 	assert (state == READY);
 	state = ACTIVATING;
-	update();
+	return update();
     }
 
     void dump_state() {
 	printf("%s: %s", name, state_to_string(state));
+	if (n_buffer_retries) printf(" || %d buffer retries", n_buffer_retries);
 	lane_switches->dump_state();
 	if (is_active()) buffer_switches->dump_state();
 	printf(" << ");
@@ -478,10 +512,6 @@ public:
 	if (state >= STOP) state = INIT;
     }
 
-    void jump_to_active() {
-	if (state >= LOADING && state < ACTIVE) state = ACTIVE;
-    }
-
 private:
     const char *name;
     LaneSwitches *lane_switches;
@@ -489,11 +519,13 @@ private:
     Stepper *stepper;
 
     int manual_feed = 0;
+    int mm_to_load = 0;
+    int n_buffer_retries = 0;
 
     enum State {
 	    INIT,
 	    EMPTY, PRE_LOADING, PRE_LOADING_RETRACT, READY,
-	    ACTIVATING, LOADING,
+	    ACTIVATING, LOADING, LOADING_RETRACT,
 	    ACTIVE, WAITING,
 	    EMPTYING,
 	    STOP, FEED, FEED_WAITING, RETRACT, RETRACT_WAITING
@@ -509,6 +541,7 @@ private:
 	case READY: return "ready";
 	case ACTIVATING: return "activating";
 	case LOADING: return "loading";
+	case LOADING_RETRACT: return "loading(retract)";
 	case ACTIVE: return "active";
 	case WAITING: return "waiting";
 	case EMPTYING: return "emptying";
@@ -522,7 +555,14 @@ private:
     }
 
     inline void trace_state(enum State old_state) {
-	if (state != old_state) printf("%s: %s => %s\n", name, state_to_string(old_state), state_to_string(state));
+	if (state != old_state) {
+	    printf("%s: %s => %s", name, state_to_string(old_state), state_to_string(state));
+	    if (old_state < ACTIVE && state >= ACTIVE) {
+		printf(" | ");
+		dump_state();
+	    }
+	    printf("\n");
+	}
     }
 };
 
@@ -545,13 +585,35 @@ static Stepper *create_lane_stepper(lane_config_t *config, motor_config_t *motor
     return stepper;
 }
 
-class Coordinator : ThreadInterruptNotifier {
+class ThreadCondNotifier : public ThreadInterruptNotifier {
 public:
-    Coordinator() : ThreadInterruptNotifier("coordinator") {
+    ThreadCondNotifier(PiMutex *lock, PiCond *cond, const char *name = "notifier") : ThreadInterruptNotifier(name), lock(lock), cond(cond) {
+    }
+
+    void on_change_safe(void) override {
+	lock->lock();
+	cond->broadcast();
+	lock->unlock();
+    }
+
+private:
+    PiMutex *lock;
+    PiCond *cond;
+};
+
+class Coordinator : public PiThread {
+public:
+    Coordinator() : PiThread("coordinator") {
+	lock = new PiMutex();
+	cond = new PiCond();
+
+	lock->lock();
+	notifier = new ThreadCondNotifier(lock, cond);
+
 	tx = pico_new_pio_uart_tx(config.motor_config.tx, 115200);
-	buffer_switches = new BufferSwitches(&config.buffer, this);
-	lane_1_switches = new LaneSwitches(&config.lanes[0], this);
-	lane_2_switches = new LaneSwitches(&config.lanes[1], this);
+	buffer_switches = new BufferSwitches(&config.buffer, notifier);
+	lane_1_switches = new LaneSwitches(&config.lanes[0], notifier);
+	lane_2_switches = new LaneSwitches(&config.lanes[1], notifier);
 	lane_1 = new Lane(lane_1_switches, buffer_switches, create_lane_stepper(&config.lanes[0], &config.motor_config, "stepper-1", tx), "lane-1");
 	lane_2 = new Lane(lane_2_switches, buffer_switches, create_lane_stepper(&config.lanes[1], &config.motor_config, "stepper-2", tx), "lane-2");
 
@@ -565,6 +627,8 @@ public:
 
 	update(true);
 
+	lock->unlock();
+
 	// TODO: What to do here!?!?!
 	while (lane_1->is_active() && lane_2->is_active()) {
 	    lane_1->error();
@@ -575,10 +639,18 @@ public:
 
 	if (lane_1->is_active()) active_lane = lane_1;
 	if (lane_2->is_active()) active_lane = lane_2;
+
+	start();
     }
 
-    void on_change_safe() override {
-	update();
+    void main(void) override {
+	lock->lock();
+	while (1) {
+	    if (polling_us) cond->wait_for(lock, polling_us);
+	    else cond->wait(lock);
+	    polling_us = 0;
+	    update();
+	}
     }
 
     void update(bool force = true) {
@@ -586,26 +658,19 @@ public:
 	bool l1_changed = lane_1_switches->update();
 	bool l2_changed = lane_2_switches->update();
 
-	if (force || l1_changed || (active_lane == lane_1 && output_changed)) lane_1->update();
-	if (force || l2_changed || (active_lane == lane_2 && output_changed)) lane_2->update();
+	if (force || l1_changed || (active_lane == lane_1 && output_changed)) update_polling_us(lane_1->update());
+	if (force || l2_changed || (active_lane == lane_2 && output_changed)) update_polling_us(lane_2->update());
 
 	if (active_lane && ! active_lane->is_active()) active_lane = NULL;
-	activate();
-    }
 
-    void activate(bool jump_to_active = false) {
 	if (! active_lane) {
 	    if (lane_1->is_ready()) active_lane = lane_1;
 	    else if (lane_2->is_ready()) active_lane = lane_2;
 	    if (active_lane) {
-		active_lane->activate();
+		update_polling_us(active_lane->activate());
 		printf("activated: ");
 		active_lane->dump_state();
 	    }
-	}
-	if (active_lane && jump_to_active) {
-	    active_lane->jump_to_active();
-	    update(true);
 	}
     }
 	
@@ -653,6 +718,16 @@ public:
     }
 
 private:
+    void update_polling_us(us_time_t new_polling_us) {
+	if (! new_polling_us) return;
+	else if (polling_us == 0 || new_polling_us < polling_us) polling_us = new_polling_us;
+    }
+
+private:
+    PiMutex *lock;
+    PiCond *cond;
+    ThreadCondNotifier *notifier;
+
     UART_Tx *tx;
     BufferSwitches *buffer_switches;
     LaneSwitches *lane_1_switches;
@@ -661,6 +736,7 @@ private:
     Lane *lane_2;
 
     Lane *active_lane = NULL;
+    us_time_t polling_us = 0;
 };
 
 class StateDumper : public PiThread {
@@ -807,9 +883,6 @@ static void threads_main(int argc, char **argv) {
 		sscanf(&line[12], "%d", &enabled);
 		if (enabled) state_dumper->enable();
 		else state_dumper->disable();
-	    } else if (strcmp(line, "active") == 0) {
-		coordinator->resume();
-		coordinator->activate(true);
 	    } else if (strcmp(line, "stop") == 0) {
 		coordinator->stop();
 	    } else if (strcmp(line, "resume") == 0) {
@@ -860,7 +933,6 @@ static void threads_main(int argc, char **argv) {
 		printf("factory-reset\n");
 		printf("\nInfinite Feeder Control:");
 		printf("\n------------------------\n");
-		printf("active: exit stop / early feeding to move to active\n");
 		printf("stop: switch to manual processing\n");
 		printf("feed [lane [speed]]: cause a lane to start feeding filament\n");
 		printf("retract [lane [speed]]: cause a lane to start retracting filament\n");
