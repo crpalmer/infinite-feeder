@@ -99,8 +99,8 @@ static config_t factory_config = {
 	.mm_to_load = 200,
 	.mm_to_retry = 50,
 	.mm_to_load2 = 100,
-	.y_output_timeout_us = 5*1000*1000,
-	.y_output_retract_mm = 20,
+	.y_output_timeout_us = 10*1000*1000,
+	.y_output_retract_mm = 10,
     },
 };
 
@@ -423,7 +423,7 @@ public:
 		    state = EMPTY;
 		} else if (has_y_output) {
 		    state = ACTIVE;
-		    target_mm = stepper->get_mm_moved() + 50;
+		    target_mm = stepper->get_mm_moved() + 60;
 		    wait_until = us_now() + config.error.y_output_timeout_us;
 		} else if (buffer_is_full || stepper->get_mm_moved() >= target_mm) {
 		    target_mm = stepper->get_mm_moved() - config.error.mm_to_retry;
