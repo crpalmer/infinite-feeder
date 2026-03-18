@@ -423,7 +423,7 @@ public:
 		    state = EMPTY;
 		} else if (has_y_output) {
 		    state = ACTIVE;
-		    target_mm = stepper->get_mm_moved() + 60;
+		    y_output_target_mm = target_mm = stepper->get_mm_moved() + 60;
 		    wait_until = us_now() + config.error.y_output_timeout_us;
 		} else if (buffer_is_full || stepper->get_mm_moved() >= target_mm) {
 		    target_mm = stepper->get_mm_moved() - config.error.mm_to_retry;
@@ -457,7 +457,7 @@ public:
 		    state = EMPTYING;
 		} else if (buffer_is_empty) {
 		    state = ACTIVE;
-		} else if (buffer_is_full && stepper->get_mm_moved() < target_mm) {
+		} else if (stepper->get_mm_moved() < target_mm) {
 		    if (now >= wait_until) {
 			target_mm = stepper->get_mm_moved() - config.error.y_output_retract_mm;
 			state = ACTIVE_RETRACT;
@@ -472,6 +472,7 @@ public:
 		if (stepper->get_mm_moved() <= target_mm) {
 		    state = ACTIVE;
 		    wait_until = us_now() + config.error.y_output_timeout_us;
+		    target_mm = y_output_target_mm;
 		} else {
 		    feed = -config.motor_config.loading_speed;
 		    polling_us = 100*1000;
@@ -568,7 +569,7 @@ private:
 
     us_time_t preloading_started_at = 0;
     int manual_feed = 0;
-    int target_mm = 0;
+    double target_mm = 0, y_output_target_mm = 0;
     us_time_t wait_until = 0;
     int n_buffer_retries = 0, n_y_retries = 0;
 
