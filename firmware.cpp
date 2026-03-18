@@ -539,6 +539,7 @@ public:
 	printf(" << ");
 	stepper->dump_state();
 	printf(" >>");
+	printf(" target_mm %.2f", target_mm);
     }
 
     void error() {
@@ -611,14 +612,7 @@ private:
     }
 
     inline void trace_state(enum State old_state) {
-	if (state != old_state) {
-	    printf("%s: %s => %s", name, state_to_string(old_state), state_to_string(state));
-	    if (old_state == ACTIVATING || (old_state < ACTIVE && state >= ACTIVE)) {
-		printf(" | ");
-		dump_state();
-	    }
-	    printf("\n");
-	}
+	if (state != old_state) printf("%s: %s => %s\n", name, state_to_string(old_state), state_to_string(state));
     }
 };
 
@@ -726,6 +720,7 @@ public:
 		update_polling_us(active_lane->activate());
 		printf("activated: ");
 		active_lane->dump_state();
+		printf("\n");
 	    }
 	}
     }
