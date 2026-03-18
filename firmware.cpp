@@ -493,12 +493,7 @@ public:
 		break;
 	    case RETRACT:
 		if (! is_present) state = STOP;
-		else if (buffer_is_empty) state = RETRACT_WAITING;
 		else feed = manual_feed;
-		break;
-	    case RETRACT_WAITING:
-		if (! is_present) state = STOP;
-		else if (! buffer_is_empty) state = RETRACT;
 		break;
 	    }
 
@@ -583,7 +578,7 @@ private:
 	    ACTIVATING, LOADING, LOADING_RETRACT,
 	    ACTIVE, WAITING, ACTIVE_RETRACT,
 	    EMPTYING,
-	    STOP, FEED, FEED_WAITING, RETRACT, RETRACT_WAITING
+	    STOP, FEED, FEED_WAITING, RETRACT
 	} state = INIT;
 
 private:
@@ -606,7 +601,6 @@ private:
 	case FEED: return "feed";
 	case FEED_WAITING: return "feed-waiting";
 	case RETRACT: return "retract";
-	case RETRACT_WAITING: return "retract-waiting";
 	}
 	return "** INVALID STATE**";
     }
