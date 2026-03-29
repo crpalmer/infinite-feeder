@@ -1,0 +1,13 @@
+.grid-container {
+    display: grid;
+    /* Creates two columns of equal width (1 fractional unit each) */
+    grid-template-columns: 1fr 1fr; 
+    /* Adds a gap between columns */
+    gap: 20px; 
+}
+
+.column-item {
+    padding: 1rem;
+    /* Add styling like background color for visibility */
+    // background-color: #f0f0f0; 
+}
