@@ -11,6 +11,7 @@
 
 #include "index.html.h"
 #include "infinite-feeder.css.h"
+#include "favicon.ico.h"
 
 static struct {
     char hostname[128];
@@ -87,6 +88,33 @@ private:
     }
 };
 
+class StaticHandler : public HttpdFilenameHandler {
+public:
+    StaticHandler(const uint8_t *data, size_t len) : data(data), len(len) {
+    }
+
+    HttpdResponse *open() {
+	return new HttpdResponse(new MemoryBuffer(data, len));
+    }
+
+private:
+    const uint8_t *data;
+    size_t len;
+};
+
+class HttpdHandler : public HttpdSubstitutionHandler {
+public:
+    HttpdHandler(HttpdFilenameHandler *base) : HttpdSubstitutionHandler(base) {
+    }
+
+    const char *get_value_of(const char *key) {
+	if (strcmp(key, "LANE1_DATA") == 0) {
+	    return "{ i1: 'input-1', i2: 42 }";
+	}
+	return NULL;
+    }
+};
+
 static void threads_main(int argc, char **argv) {
     ms_sleep(1000);
 
@@ -104,8 +132,9 @@ static void threads_main(int argc, char **argv) {
     printf("Creating Httpd server\n");
     auto httpd = new HttpdServer(httpd_config.port);
     httpd->add_file_handler("/", new HttpdRedirectHandler("/index.html"));
-    //httpd->add_file_handler("/index.html", new HttpdRedirectHandler("/finance/index.html"));
-    //httpd->add_file_handler("/infinite-feeder.css", new HttpdRedirectHandler("/finance/index.html"));
+    httpd->add_file_handler("/index.html", new HttpdHandler(new StaticHandler(index_html, index_html_len)));
+    httpd->add_file_handler("/infinite-feeder.css", new StaticHandler(infinite_feeder_css, infinite_feeder_css_len));
+    httpd->add_file_handler("/favicon.ico", new StaticHandler(favicon_ico, favicon_ico_len));
 
     printf("Starting Httpd server on port %d\n", httpd_config.port);
     httpd->start();
