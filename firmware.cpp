@@ -3,6 +3,7 @@
 #include <math.h>
 #include <limits.h>
 #include "commands.h"
+#include "config.h"
 #include "fram-mb85c.h"
 #include "gp-input.h"
 #include "gp-output.h"
@@ -15,94 +16,10 @@
 #include "tmc2209.h"
 #include "uart-channel.h"
 
-typedef struct {
-    int	    present;
-    int	    loaded;
-    int	    enable;
-    int	    dir;
-    int	    step;
-    int	    uart_address;
-    bool    invert;
-} lane_config_t;
-
-typedef struct {
-    int	    tx, rx;
-    int	    rms_current;
-    int	    microstepping;
-    int	    steps_per_mm;
-    int	    preload_speed;
-    int	    loading_speed;
-    int	    refill_speed;
-} motor_config_t;
-
-typedef struct {
-    int	    input;
-    int	    full, empty;
-} buffer_config_t;
-
-typedef struct {
-    int	    mm_to_load, mm_to_retry, mm_to_load2;
-    int	    y_output_timeout_us;
-    int	    y_output_retract_mm;
-} error_config_t;
-
-static const char MAGIC[8] = "InfFeed";
-
-typedef struct {
-    char magic[8];
-    int version;
-    lane_config_t   lanes[2];
-    motor_config_t  motor_config;
-    buffer_config_t buffer;
-    error_config_t  error;
-} config_t;
-
-static int CONFIG_VERSION = 1;
-
-static config_t factory_config = {
-    .magic = { MAGIC[0], MAGIC[1], MAGIC[2], MAGIC[3], MAGIC[4], MAGIC[5], MAGIC[6], MAGIC[7] },
-    .version = CONFIG_VERSION,
-    {
-	{
-	    .present = 22,
-	    .loaded = 27,
-	    .enable = 15,
-	    .dir = 13,
-	    .step = 14,
-	    .uart_address = 3,
-	    .invert = false },
-	{
-	    .present = 3,
-	    .loaded =  25,
-	    .enable = 12,
-	    .dir = 10,
-	    .step = 11,
-	    .uart_address = 0,
-	    .invert = false
-	},
-    },
-    {
-	.tx = 8, .rx = 9,
-	.rms_current = 850,
-	.microstepping = 4,
-	.steps_per_mm = 680,
-	.preload_speed = 5,
-	.loading_speed = 20,
-	.refill_speed = 10
-    },
-    {
-	.input = 16,
-	.full = 26,
-	.empty = 4,
-    },
-    {
-	.mm_to_load = 200,
-	.mm_to_retry = 50,
-	.mm_to_load2 = 100,
-	.y_output_timeout_us = 10*1000*1000,
-	.y_output_retract_mm = 10,
-    },
-};
+static uint32_t CONFIG_MAGIC = 0x98765432;
+static int CONFIG_OFFSET = 0;
+static int CONFIG_VERSION_OFFSET = CONFIG_OFFSET + sizeof(CONFIG_MAGIC);
+static int CONFIG_DATA_OFFSET = CONFIG_VERSION_OFFSET + sizeof(CONFIG_VERSION);
 
 static config_t config = factory_config;
 
@@ -110,7 +27,7 @@ class PersistentStorage {
 public:
     ~PersistentStorage() { }
     virtual bool load(config_t *c) = 0;
-    virtual bool save(config_t *c) = 0;
+    virtual bool save(const config_t *c) = 0;
 };
 
 class PicoPersistentStorage : public PersistentStorage {
@@ -120,7 +37,7 @@ public:
 	return true;
     }
 
-    bool save(config_t *c) override {
+    bool save(const config_t *c) override {
 	return false;
     }
 };
@@ -133,23 +50,34 @@ public:
     }
 
     bool load(config_t *c) override {
-	config_t new_c;
-	if (! fram->read(CONFIG_OFFSET, &new_c, sizeof(new_c))) return false;
-	if (strcmp(MAGIC, new_c.magic) != 0) return false;
+	uint32_t magic;
+	if (! fram->read(CONFIG_OFFSET, &magic, sizeof(magic))) return false;
+	if (magic != CONFIG_MAGIC) return false;
+
+	uint32_t version;
+	if (! fram->read(CONFIG_VERSION_OFFSET, &version, sizeof(version))) return false;
+	//
 	//
 	// Upgrade old configurations
 
-	if (new_c.version != CONFIG_VERSION) {
-	    printf("Loaded version %d of the configuration (should be %d)\n", new_c.version, CONFIG_VERSION);
+	if (version != CONFIG_VERSION) {
+	    printf("Loaded version %u of the configuration (should be %u)\n", (unsigned) version, (unsigned) CONFIG_VERSION);
 	    return false;
 	}
 
+	config_t new_c;
+	if (! fram->read(CONFIG_DATA_OFFSET, &new_c, sizeof(new_c))) return false;
 	*c = new_c;
+
 	return true;
     }
 
-    bool save(config_t *c) override {
-	if (! fram->write(CONFIG_OFFSET, c, sizeof(*c))) return false;
+    bool save(const config_t *c) override {
+	uint32_t magic = CONFIG_MAGIC;
+	if (! fram->write(CONFIG_OFFSET, &magic, sizeof(magic))) return false;
+	uint32_t version = CONFIG_VERSION;
+	if (! fram->write(CONFIG_VERSION_OFFSET, &version, sizeof(version))) return false;
+	if (! fram->write(CONFIG_DATA_OFFSET, c, sizeof(*c))) return false;
 	pi_reboot();
 	return true;
     }
