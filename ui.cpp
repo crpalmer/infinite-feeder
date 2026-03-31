@@ -35,11 +35,56 @@ static config_t config = factory_config;
 
 static class Storage *storage;
 
+#ifdef PLATFORM_linux
+#include "file.h"
+
+class FakeFRAM : public FRAM {
+public:
+    FakeFRAM() {
+	const char *name = "fake_fram.data";
+	if (! file_exists(name)) {
+	    if ((f = fopen(name, "w")) == NULL) perror(name);
+	    else {
+		for (size_t i = 0; i < get_capacity(); i++) fputc(' ', f);
+		fclose(f);
+	    }
+	}
+	f = fopen(name, "r+b");
+	if (! f) {
+	    perror(name);
+	    exit(1);
+	}
+    }
+
+    bool read(int offset, void *data, size_t n) override {
+	if (fseek(f, offset, SEEK_SET) != 0) return false;
+	if (fread(data, 1, n, f) != n) return false;
+	return true;
+    }
+
+    bool write(int offset, const void *data, size_t n) override {
+	if (fseek(f, offset, SEEK_SET) != 0) return false;
+	if (fwrite(data, 1, n, f) != n) return false;
+	fflush(f);
+	return true;
+    }
+
+    size_t get_capacity() { return 128*1024; }
+
+private:
+    FILE *f;
+};
+#endif
+
 class Storage {
 public:
     Storage() {
+#ifdef PLATFORM_linux
+	fram = new FakeFRAM();
+#else
         i2c_init_bus(I2C_BUS, I2C_SDA, I2C_SCL);
         fram = new FRAM_MB85C(I2C_BUS);
+#endif
     }
 
     bool load_httpd_config(httpd_config_t *c) {
