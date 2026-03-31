@@ -8,7 +8,7 @@ typedef struct {
     int	    dir;
     int	    step;
     int	    uart_address;
-    bool    invert;
+    int     invert;
 } lane_config_t;
 
 typedef struct {

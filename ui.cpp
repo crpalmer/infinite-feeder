@@ -1,13 +1,15 @@
 #include "pi.h"
 #include <string.h>
+#include <unordered_map>
 #include "commands.h"
+#include "config.h"
 #include "fram-mb85c.h"
 #include "httpd-server.h"
+#include "pi-threads.h"
 #include "stdin-reader.h"
 #include "stdout-writer.h"
 #include "threads-console.h"
 #include "uart-channel.h"
-#include "pi-threads.h"
 #include "wifi.h"
 
 #include "index.html.h"
@@ -28,6 +30,8 @@ static httpd_config_t httpd_config = {
     80,
     { "", "" }
 };
+
+static config_t config = factory_config;
 
 static class Storage *storage;
 
@@ -160,18 +164,101 @@ private:
 class HttpdHandler : public HttpdSubstitutionHandler {
 public:
     HttpdHandler(HttpdFilenameHandler *base) : HttpdSubstitutionHandler(base) {
+	for (int lane = 0; lane < 2; lane++) {
+	    insert_lane_item(lane, "present",         &config.lanes[lane].present);
+	    insert_lane_item(lane, "loaded",          &config.lanes[lane].loaded);
+	    insert_lane_item(lane, "enable",          &config.lanes[lane].enable);
+	    insert_lane_item(lane, "dir",             &config.lanes[lane].dir);
+	    insert_lane_item(lane, "step",            &config.lanes[lane].step);
+	    insert_lane_item(lane, "uart_address",    &config.lanes[lane].uart_address);
+	    insert_lane_item(lane, "invert",          &config.lanes[lane].invert);
+	}
+	map["motor_rx"] =             &config.motor_config.rx;
+	map["motor_tx"] =             &config.motor_config.tx;
+	map["motor_rms_current"] =    &config.motor_config.rms_current;
+	map["motor_microstepping"] =  &config.motor_config.microstepping;
+	map["motor_steps_per_mm"] =   &config.motor_config.steps_per_mm;
+	map["motor_preload_speed"] =  &config.motor_config.preload_speed;
+	map["motor_loading_speed"] =  &config.motor_config.loading_speed;
+	map["motor_refill_speed"] =   &config.motor_config.refill_speed;
+
+	map["buffer_input"] = &config.buffer.input;
+	map["buffer_full"] =  &config.buffer.full;
+	map["buffer_empty"] = &config.buffer.empty;
+
+	map["error_mm_to_load"] =          &config.error.mm_to_load;
+	map["error_mm_to_retry"] =         &config.error.mm_to_retry;
+	map["error_mm_to_load2"] =         &config.error.mm_to_load2;
+	map["error_y_output_timeout_us"] = &config.error.y_output_timeout_us;
+	map["error_y_output_retract_mm"] = &config.error.y_output_retract_mm;
     }
 
     const char *get_value_of(const char *key) {
-	if (strcmp(key, "LANE1_DATA") == 0) {
-	    return "{ i1: 'input-1', i2: 42 }";
+	if (map[key]) {
+	    sprintf(tmp_string, "%d", *map[key]);
+	    return tmp_string;
+	}
+	if (strcmp(key, "PIN_SELECT_OPTIONS") == 0) {
+	    return
+		"<option value=\"26\" :selected=\"value == 26\">THB</option>\n"
+		"<option value=\"27\" :selected=\"value == 27\">TH0</option>\n"
+		"<option value=\" 4\" :selected=\"value ==  4\">X-Stop</option>\n"
+		"<option value=\" 3\" :selected=\"value ==  3\">Y-Stop</option>\n"
+		"<option value=\"25\" :selected=\"value == 25\">Z-Stop</option>\n"
+		"<option value=\"16\" :selected=\"value == 16\">E0-Stop</option>\n"
+		"<option value=\"24\" :selected=\"value == 24\">RGB</option>\n"
+		"<option value=\"29\" :selected=\"value == 29\">Servos</option>\n"
+		"<option value=\"22\" :selected=\"value == 22\">Probe</option>\n"
+		"<option value=\"17\" :selected=\"value == 17\">FAN1</option>\n"
+		"<option value=\"18\" :selected=\"value == 18\">FAN2</option>\n"
+		"<option value=\"20\" :selected=\"value == 20\">FAN3</option>\n"
+		"<option value=\" 8\" :selected=\"value ==  8\">Motor UART TX</option>\n"
+		"<option value=\" 9\" :selected=\"value ==  9\">Motor UART RX</option>\n"
+		"<option value=\"12\" :selected=\"value == 12\">Motor X(EN)</option>\n"
+		"<option value=\"11\" :selected=\"value == 11\">Motor X(STEP)</option>\n"
+		"<option value=\"10\" :selected=\"value == 10\">Motor X(DIR)</option>\n"
+		"<option value=\" 7\" :selected=\"value ==  7\">Motor Y(EN)</option>\n"
+		"<option value=\" 6\" :selected=\"value ==  6\">Motor Y(STEP)</option>\n"
+		"<option value=\" 5\" :selected=\"value ==  5\">Motor Y(DIR)</option>\n"
+		"<option value=\" 2\" :selected=\"value ==  2\">Motor Z(EN)</option>\n"
+		"<option value=\"19\" :selected=\"value == 19\">Motor Z(STEP)</option>\n"
+		"<option value=\"28\" :selected=\"value == 28\">Motor Z(DIR)</option>\n"
+		"<option value=\"15\" :selected=\"value == 15\">Motor E0(EN)</option>\n"
+		"<option value=\"14\" :selected=\"value == 14\">Motor E0(STEP)</option>\n"
+		"<option value=\"13\" :selected=\"value == 13\">Motor E0(DIR)</option>\n"
+		"<option value=\"20\" :selected=\"value == 20\">Laser</option>\n"
+		"<option value=\"23\" :selected=\"value == 23\">HE</option>\n"
+		"<option value=\"21\" :selected=\"value == 21\">HB</option>\n"
+	    ;
+	}
+	if (strcmp(key, "UART_ADDRESS_SELECT_OPTIONS") == 0) {
+	    return
+		"<option value=\"0\" :selected=\"value == 0\">X UART</option>\n"
+		"<option value=\"2\" :selected=\"value == 2\">Y UART</option>\n"
+		"<option value=\"1\" :selected=\"value == 1\">Z UART</option>\n"
+		"<option value=\"3\" :selected=\"value == 3\">E0 UART</option>\n"
+	    ;
 	}
 	return NULL;
     }
+
+private:
+    void insert_lane_item(int lane, const char *name, int *ptr) {
+	char full[10 + strlen(name)];
+	sprintf(full, "lane%d_%s", lane+1, name);
+	map[full] = ptr;
+    }
+
+    std::unordered_map<std::string, int *> map;
+    char tmp_string[50];
 };
 
 static void threads_main(int argc, char **argv) {
     ms_sleep(1000);
+
+    printf("Starting WiFi connection (async)\n");
+    if (httpd_config.ap.ssid[0]) wifi_set_ap(httpd_config.ap.ssid, httpd_config.ap.password);
+    wifi_init("infinite-feeder");
 
     printf("Creating a console\n");
     new HttpdConsole();
@@ -186,17 +273,15 @@ static void threads_main(int argc, char **argv) {
     new Channel(0, 1);
 #endif
 
-    printf("Starting WiFi\n");
-    if (httpd_config.ap.ssid[0]) wifi_set_ap(httpd_config.ap.ssid, httpd_config.ap.password);
-    wifi_init("infinite-feeder");
-    wifi_wait_for_connection();
-
     printf("Creating Httpd server\n");
     auto httpd = new HttpdServer(httpd_config.port);
     httpd->add_file_handler("/", new HttpdRedirectHandler("/index.html"));
     httpd->add_file_handler("/index.html", new HttpdHandler(new StaticHandler(index_html, index_html_len)));
     httpd->add_file_handler("/infinite-feeder.css", new StaticHandler(infinite_feeder_css, infinite_feeder_css_len));
     httpd->add_file_handler("/favicon.ico", new StaticHandler(favicon_ico, favicon_ico_len));
+
+    printf("Waiting for WiFi connection to complete\n");
+    wifi_wait_for_connection();
 
     printf("Starting Httpd server on port %d\n", httpd_config.port);
     httpd->start();

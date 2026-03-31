@@ -125,10 +125,8 @@ static void read_pin(bool validate_only, const char *prompt, int *value) {
     read_int(validate_only, prompt, value, 0, 29);
 }
 
-static void read_bool(bool validate_only, const char *prompt, bool *value) {
-    int v = *value;
-    read_int(validate_only, prompt, &v, 0, 1);
-    *value = v;
+static void read_bool(bool validate_only, const char *prompt, int *value) {
+    read_int(validate_only, prompt, value, 0, 1);
 }
 
 static void set_lane_config(int id, lane_config_t *c, bool validate_only = false) {
