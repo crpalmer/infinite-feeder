@@ -1,6 +1,7 @@
 #include "pi.h"
 #include <string.h>
 #include "commands.h"
+#include "fram-mb85c.h"
 #include "httpd-server.h"
 #include "stdin-reader.h"
 #include "stdout-writer.h"
@@ -13,22 +14,66 @@
 #include "infinite-feeder.css.h"
 #include "favicon.ico.h"
 
-static struct {
+typedef struct {
     char hostname[128];
     int port;
     struct {
         char ssid[128];
         char password[32];
     } ap;
-} httpd_config = {
+} httpd_config_t;
+
+static httpd_config_t httpd_config = {
     "infinite-feeder",
     80,
     { "", "" }
 };
 
-static void save_httpd_state() {
-    printf("Saving my state\n");
-}
+static class Storage *storage;
+
+class Storage {
+public:
+    Storage() {
+        i2c_init_bus(I2C_BUS, I2C_SDA, I2C_SCL);
+        fram = new FRAM_MB85C(I2C_BUS);
+    }
+
+    bool load_httpd_config(httpd_config_t *c) {
+	uint32_t magic;
+        if (! fram->read(HTTPD_CONFIG_OFFSET, &magic, sizeof(magic))) return false;
+        if (magic != HTTPD_CONFIG_MAGIC) return false;
+
+	uint32_t version;
+	if (! fram->read(HTTPD_CONFIG_VERSION_OFFSET, &version, sizeof(version))) return false;
+
+	// TODO: Version upgrades
+	if (version != HTTPD_CONFIG_VERSION) return false;
+
+	if (! fram->read(HTTPD_CONFIG_DATA_OFFSET, c, sizeof(*c))) return false;
+        return true;
+    }
+
+    bool save_httpd_config(httpd_config_t *c) {
+	uint32_t magic = HTTPD_CONFIG_MAGIC;
+	if (! fram->write(HTTPD_CONFIG_OFFSET, &magic, sizeof(magic))) return false;
+	uint32_t version = HTTPD_CONFIG_VERSION;
+	if (! fram->write(HTTPD_CONFIG_VERSION_OFFSET, &version, sizeof(version))) return false;
+	return fram->write(HTTPD_CONFIG_DATA_OFFSET, c, sizeof(*c));
+    }
+
+private:
+    FRAM *fram;
+
+    static const int I2C_BUS = 0;
+    static const int I2C_SDA = 4;
+    static const int I2C_SCL = 5;
+
+    static const int HTTPD_CONFIG_OFFSET = 0;
+    static const uint32_t HTTPD_CONFIG_MAGIC = 0x12345678;
+    static const int HTTPD_CONFIG_VERSION_OFFSET = HTTPD_CONFIG_OFFSET + sizeof(HTTPD_CONFIG_MAGIC);
+    static const uint32_t HTTPD_CONFIG_VERSION = 1;
+    static const int HTTPD_CONFIG_DATA_OFFSET = HTTPD_CONFIG_VERSION_OFFSET + sizeof(HTTPD_CONFIG_VERSION);
+};
 
 class Channel : public UARTChannel {
 public:
@@ -60,6 +105,13 @@ public:
 	} else if (is_command(cmd, "password")) {
 	    process_setting(arg, "password", httpd_config.ap.password, sizeof(httpd_config.ap.password));
 	    if (httpd_config.ap.ssid[0]) wifi_set_ap(httpd_config.ap.ssid, httpd_config.ap.password);
+	} else if (is_command(cmd, "save")) {
+	    if (storage->save_httpd_config(&httpd_config)) {
+		printf("Saved configuration, rebooting.\n");
+		pi_reboot();
+	    } else {
+		printf("Failed to save configuration.\n");
+	    }
 	} else if (is_command(cmd, "ssid")) {
 	    process_setting(arg, "ssid", httpd_config.ap.ssid, sizeof(httpd_config.ap.ssid));
 	    if (httpd_config.ap.ssid[0]) wifi_set_ap(httpd_config.ap.ssid, httpd_config.ap.password);
@@ -70,9 +122,11 @@ public:
 
     void usage(void) override {
 	ThreadsConsole::usage();
+	printf("\nConfiguration changes (do not take effect until you execute \"save\"\n\n");
 	printf("hostname [hostname]\n");
 	printf("password [password]\n");
 	printf("ssid [ssid]\n");
+	printf("\nsave : save configuration and reboot\n");
     }
 
 private:
@@ -81,7 +135,6 @@ private:
 	    printf("Current %s: %s\n", name, value);
 	} else if (*arg && strlen(arg) < len) {
 	    strcpy(value, arg);
-	    save_httpd_state();
 	} else {
 	    printf("%s too long\n", name);
 	}
@@ -121,13 +174,18 @@ static void threads_main(int argc, char **argv) {
     printf("Creating a console\n");
     new HttpdConsole();
 
+    printf("Creating Storage\n");
+    storage = new Storage();
+    if (storage->load_httpd_config(&httpd_config)) printf("Loading previous config\n");
+    else printf("Failed to load previous config\n");
+
+    printf("Creating channel to the SKR Pico\n");
+    new Channel(0, 1);
+
     printf("Starting WiFi\n");
     if (httpd_config.ap.ssid[0]) wifi_set_ap(httpd_config.ap.ssid, httpd_config.ap.password);
     wifi_init("infinite-feeder");
     wifi_wait_for_connection();
-
-    printf("Creating channel to the SKR Pico\n");
-    new Channel(0, 1);
 
     printf("Creating Httpd server\n");
     auto httpd = new HttpdServer(httpd_config.port);
@@ -138,8 +196,6 @@ static void threads_main(int argc, char **argv) {
 
     printf("Starting Httpd server on port %d\n", httpd_config.port);
     httpd->start();
-
-    printf("main thread is now exiting\n");
 }
 
 int main(int argc, char **argv) {
