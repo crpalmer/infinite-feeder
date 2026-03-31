@@ -1,6 +1,8 @@
 #ifndef __UART_CHANNEL_H__
 #define __UART_CHANNEL_H__
 
+#ifndef PLATFORM_linux
+
 #include "pi-threads.h"
 #include "uart.h"
 
@@ -20,5 +22,7 @@ private:
     UART_Tx *tx;
     UART_Rx *rx;
 };
+
+#endif
 
 #endif

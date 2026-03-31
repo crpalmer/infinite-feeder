@@ -1,3 +1,5 @@
+#ifndef PLATFORM_linux
+
 #include "pi.h"
 #include "mem.h"
 #include "uart-channel.h"
@@ -55,3 +57,4 @@ bool UARTChannel::read_int(int *value) {
 	else return false;
     }
 }
+#endif

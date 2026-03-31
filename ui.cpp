@@ -75,6 +75,7 @@ private:
     static const int HTTPD_CONFIG_DATA_OFFSET = HTTPD_CONFIG_VERSION_OFFSET + sizeof(HTTPD_CONFIG_VERSION);
 };
 
+#ifndef PLATFORM_linux
 class Channel : public UARTChannel {
 public:
     Channel(int tx_pin, int rx_pin) : UARTChannel(tx_pin, rx_pin) {
@@ -88,6 +89,7 @@ public:
 	}
     }
 };
+#endif
 
 class HttpdConsole : public PiThread, public ThreadsConsole {
 public:
@@ -179,8 +181,10 @@ static void threads_main(int argc, char **argv) {
     if (storage->load_httpd_config(&httpd_config)) printf("Loading previous config\n");
     else printf("Failed to load previous config\n");
 
+#ifndef PLATFORM_linux
     printf("Creating channel to the SKR Pico\n");
     new Channel(0, 1);
+#endif
 
     printf("Starting WiFi\n");
     if (httpd_config.ap.ssid[0]) wifi_set_ap(httpd_config.ap.ssid, httpd_config.ap.password);
