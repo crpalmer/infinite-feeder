@@ -110,6 +110,38 @@ public:
 	return fram->write(HTTPD_CONFIG_DATA_OFFSET, c, sizeof(*c));
     }
 
+    bool load_config(config_t *c) {
+        uint32_t magic;
+        if (! fram->read(CONFIG_OFFSET, &magic, sizeof(magic))) return false;
+        if (magic != CONFIG_MAGIC) return false;
+
+        uint32_t version;
+        if (! fram->read(CONFIG_VERSION_OFFSET, &version, sizeof(version))) return false;
+        //
+        //
+        // Upgrade old configurations
+
+        if (version != CONFIG_VERSION) {
+            printf("Loaded version %u of the configuration (should be %u)\n", (unsigned) version, (unsigned) CONFIG_VERSION);
+            return false;
+        }
+
+        config_t new_c;
+        if (! fram->read(CONFIG_DATA_OFFSET, &new_c, sizeof(new_c))) return false;
+        *c = new_c;
+
+        return true;
+    }
+
+    bool save_config(config_t *c) {
+        uint32_t magic = CONFIG_MAGIC;
+        if (! fram->write(CONFIG_OFFSET, &magic, sizeof(magic))) return false;
+        uint32_t version = CONFIG_VERSION;
+        if (! fram->write(CONFIG_VERSION_OFFSET, &version, sizeof(version))) return false;
+        if (! fram->write(CONFIG_DATA_OFFSET, c, sizeof(*c))) return false;
+        return true;
+    }
+
 private:
     FRAM *fram;
 
@@ -122,6 +154,12 @@ private:
     static const int HTTPD_CONFIG_VERSION_OFFSET = HTTPD_CONFIG_OFFSET + sizeof(HTTPD_CONFIG_MAGIC);
     static const uint32_t HTTPD_CONFIG_VERSION = 1;
     static const int HTTPD_CONFIG_DATA_OFFSET = HTTPD_CONFIG_VERSION_OFFSET + sizeof(HTTPD_CONFIG_VERSION);
+
+    static const int CONFIG_OFFSET = 4096;
+    static const uint32_t CONFIG_MAGIC = 0x87654321;
+    static const int CONFIG_VERSION_OFFSET = CONFIG_OFFSET + sizeof(CONFIG_MAGIC);
+    static const uint32_t CONFIG_VERSION = 1;
+    static const int CONFIG_DATA_OFFSET = CONFIG_VERSION_OFFSET + sizeof(CONFIG_VERSION);
 };
 
 #ifndef PLATFORM_linux
@@ -197,7 +235,7 @@ public:
     StaticHandler(const uint8_t *data, size_t len) : data(data), len(len) {
     }
 
-    HttpdResponse *open() {
+    HttpdResponse *open(HttpdRequest *request) {
 	return new HttpdResponse(new MemoryBuffer(data, len));
     }
 
@@ -287,6 +325,28 @@ public:
 	return NULL;
     }
 
+    HttpdResponse *open(HttpdRequest *request) override {
+	bool save_needed = false;
+	for (const auto& pair : map) {
+	    const char *str;
+	    int len = request->get_parameter(pair.first.c_str(), &str);
+	    if (len >= 0) {
+		char value[len+1];
+		strncpy(value, str, len);
+		value[len] = '\0';
+		int int_value;
+		if (sscanf(value, "%d", &int_value) == 1) {
+		    if (*pair.second != int_value) save_needed = true;
+		    *pair.second = int_value;
+		}
+	    }
+	}
+	if (save_needed) {
+	    if (! storage->save_config(&config)) printf("*** FAILED TO SAVE CONFIGURATION ***\n");
+	}
+	return HttpdSubstitutionHandler::open(request);
+    }
+
 private:
     void insert_lane_item(int lane, const char *name, int *ptr) {
 	char full[10 + strlen(name)];
@@ -310,8 +370,10 @@ static void threads_main(int argc, char **argv) {
 
     printf("Creating Storage\n");
     storage = new Storage();
-    if (storage->load_httpd_config(&httpd_config)) printf("Loading previous config\n");
-    else printf("Failed to load previous config\n");
+    if (storage->load_httpd_config(&httpd_config)) printf("Loading previous HTTP config\n");
+    else printf("Failed to load previous HTTP config\n");
+    if (storage->load_config(&config)) printf("Loaded firmware config\n");
+    else printf("Failed to load previous firmware config\n");
 
 #ifndef PLATFORM_linux
     printf("Creating channel to the SKR Pico\n");
