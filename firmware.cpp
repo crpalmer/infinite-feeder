@@ -421,7 +421,8 @@ public:
 		}
 		break;
 	    case ACTIVE:
-		if (! is_loaded) state = EMPTYING;
+		if (buffer_is_full && buffer_is_empty) state = ERROR;
+		else if (! is_loaded) state = EMPTYING;
 		else if (buffer_is_full) state = WAITING;
 		else feed = config.motor_config.refill_speed;
 		break;
@@ -561,6 +562,7 @@ private:
 	    ACTIVATING, LOADING, LOADING_RETRACT,
 	    ACTIVE, WAITING, ACTIVE_RETRACT,
 	    EMPTYING,
+	    ERROR,
 	    STOP, FEED, FEED_WAITING, RETRACT
 	} state = INIT;
 
@@ -580,6 +582,7 @@ private:
 	case WAITING: return "waiting";
 	case ACTIVE_RETRACT: return "active(retract)";
 	case EMPTYING: return "emptying";
+	case ERROR: return "error";
 	case STOP: return "stop";
 	case FEED: return "feed";
 	case FEED_WAITING: return "feed-waiting";
