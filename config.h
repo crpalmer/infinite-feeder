@@ -27,6 +27,7 @@ typedef struct {
 } buffer_config_t;
 
 typedef struct {
+    int		   rgb;
     int            mm_to_load, mm_to_retry, mm_to_load2;
     int            y_output_timeout_us;
     int            y_output_retract_mm;
@@ -74,6 +75,7 @@ static const config_t factory_config = {
         .empty = 4,
     },
     {
+	.rgb = 24,
         .mm_to_load = 200,
         .mm_to_retry = 50,
         .mm_to_load2 = 100,
@@ -82,6 +84,6 @@ static const config_t factory_config = {
     },
 };
 
-static const uint32_t CONFIG_VERSION = 1;
+static const uint32_t CONFIG_VERSION = 2;
 
 #endif

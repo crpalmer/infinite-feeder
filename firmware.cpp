@@ -8,6 +8,7 @@
 #include "gp-input.h"
 #include "gp-output.h"
 #include "i2c.h"
+#include "neopixel-pico.h"
 #include "pi-threads.h"
 #include "stepper.h"
 #include "string-utils.h"
@@ -22,6 +23,48 @@ static int CONFIG_VERSION_OFFSET = CONFIG_OFFSET + sizeof(CONFIG_MAGIC);
 static int CONFIG_DATA_OFFSET = CONFIG_VERSION_OFFSET + sizeof(CONFIG_VERSION);
 
 static config_t config = factory_config;
+
+class Lights {
+public:
+    Lights() {
+	neo = new NeoPixelPico(config.error.rgb);
+	lock = new PiMutex();
+	neo->set_n_leds(2);
+	neo->set_all(0, 0, 0);
+	neo->show();
+    }
+
+    void set(int bulb, int r, int g, int b) {
+	lock->lock();
+	neo->set_led(bulb, r, g, b);
+	neo->show();
+	lock->unlock();
+    }
+
+private:
+    NeoPixelPico *neo;
+    PiMutex *lock;
+};
+
+class LaneLight {
+public:
+    LaneLight(Lights *lights, int bulb) : lights(lights), bulb(bulb) {
+    }
+
+    void empty() { lights->set(bulb, 0, 0, 0); }
+    void preloading() { lights->set(bulb, 255, 255, 255); }
+    void loaded() { lights->set(bulb, 0, 0, 255); }
+    void error() { lights->set(bulb, 255, 0, 0); }
+    void loading() { lights->set(bulb, 0, 128, 0); }
+    void emptying() { lights->set(bulb, 128, 0, 128); }
+    void feeding() { lights->set(bulb, 0, 255, 0); }
+    void waiting() { lights->set(bulb, 0, 128, 0); }
+    void stop() { error(); }
+
+private:
+    Lights *lights;
+    int bulb;
+};
 
 class PersistentStorage {
 public:
@@ -163,6 +206,7 @@ static void set_buffer_config(buffer_config_t *c, bool validate_only = false) {
 }
 
 static void set_error_config(error_config_t *c, bool validate_only = false) {
+    read_int(validate_only, "              RGB Pin", &c->rgb);
     read_int(validate_only, "           MM to load", &c->mm_to_load);
     read_int(validate_only, "          MM to retry", &c->mm_to_retry);
     read_int(validate_only, "          MM to load2", &c->mm_to_load2);
@@ -283,7 +327,7 @@ public:
 
 class Lane {
 public:
-    Lane(LaneSwitches *lane_switches, BufferSwitches *buffer_switches, Stepper *stepper, const char *name) : name(name), lane_switches(lane_switches), buffer_switches(buffer_switches), stepper(stepper) {
+    Lane(LaneSwitches *lane_switches, BufferSwitches *buffer_switches, Stepper *stepper, LaneLight *light, const char *name) : name(name), lane_switches(lane_switches), buffer_switches(buffer_switches), stepper(stepper), light(light) {
     }
 
     us_time_t update() {
@@ -310,12 +354,14 @@ public:
 		break;
 
 	    case EMPTY:
+		light->empty();
 		if (is_present) {
 		    preloading_started_at = us_now();
 		    state = PRE_LOADING;
 		}
 		break;
 	    case PRE_LOADING:
+		light->preloading();
 		if (! is_present) state = EMPTY;
 		else if (is_loaded) state = PRE_LOADING_RETRACT;
 		else if (us_elapsed_ms_now(&preloading_started_at) > 30*1000) state = PRE_LOADING_ERROR;
@@ -330,6 +376,7 @@ public:
 		else feed = -config.motor_config.preload_speed;
 		break;
 	    case PRE_LOADING_ERROR:
+		light->error();
 		if (! is_present) state = EMPTY;
 		break;
 	    case READY:
@@ -344,6 +391,7 @@ public:
 		}
 		break;
 	    case LOADING:
+		light->loading();
 		// TODO: if (buffer_is_empty) really short filament in here somewhere??
 		if (! is_loaded && ! has_y_output) {
 		    state = EMPTY;
@@ -405,16 +453,23 @@ public:
 		}
 		break;
 	    case EMPTYING:
+		light->emptying();
 		if (! has_y_output) state = EMPTY;
 		break;
+	    case ERROR:
+		light->error();
+		break;
 	    case STOP:
+		light->stop();
 		break;
 	    case FEED:
+		light->feeding();
 		if (! is_loaded) state = STOP;
 		else if (buffer_is_full) state = FEED_WAITING;
 		else feed = manual_feed;
 		break;
 	    case FEED_WAITING:
+		light->waiting();
 		if (! is_loaded) state = STOP;
 		else if (! buffer_is_full) state = FEED;
 		break;
@@ -492,6 +547,7 @@ private:
     LaneSwitches *lane_switches;
     BufferSwitches *buffer_switches;
     Stepper *stepper;
+    LaneLight *light;
 
     us_time_t preloading_started_at = 0;
     int manual_feed = 0;
@@ -574,7 +630,7 @@ private:
 
 class Coordinator : public PiThread {
 public:
-    Coordinator() : PiThread("coordinator") {
+    Coordinator(Lights *lights) : PiThread("coordinator") {
 	lock = new PiMutex();
 	cond = new PiCond();
 
@@ -585,8 +641,8 @@ public:
 	buffer_switches = new BufferSwitches(&config.buffer, notifier);
 	lane_1_switches = new LaneSwitches(&config.lanes[0], notifier);
 	lane_2_switches = new LaneSwitches(&config.lanes[1], notifier);
-	lane_1 = new Lane(lane_1_switches, buffer_switches, create_lane_stepper(&config.lanes[0], &config.motor_config, "stepper-1", tx), "lane-1");
-	lane_2 = new Lane(lane_2_switches, buffer_switches, create_lane_stepper(&config.lanes[1], &config.motor_config, "stepper-2", tx), "lane-2");
+	lane_1 = new Lane(lane_1_switches, buffer_switches, create_lane_stepper(&config.lanes[0], &config.motor_config, "stepper-1", tx), new LaneLight(lights, 1), "lane-1");
+	lane_2 = new Lane(lane_2_switches, buffer_switches, create_lane_stepper(&config.lanes[1], &config.motor_config, "stepper-2", tx), new LaneLight(lights, 0), "lane-2");
 
 	if (! lane_1_switches->is_loaded() && ! lane_2_switches->is_loaded() && buffer_switches->has_y_output()) {
 	    // Special case, neither lane is active but one of them was active
@@ -820,6 +876,8 @@ static void threads_main(int argc, char **argv) {
     printf("Starting\n");
     Channel *channel = NULL;
 
+    Lights *lights = new Lights();
+
     if (FRAMPersistentStorage::exists()) {
 	printf("FRAM exists, using it for persistent storage\n");
 	storage = new FRAMPersistentStorage();
@@ -831,7 +889,7 @@ static void threads_main(int argc, char **argv) {
     }
 
     if (! storage->load(&config)) printf("FAILED to load existing configuration\n");
-    Coordinator *coordinator = new Coordinator();
+    Coordinator *coordinator = new Coordinator(lights);
     StateDumper *state_dumper = new StateDumper(coordinator);
 
     printf("Created coordinator, entering interactive loop.\n");
