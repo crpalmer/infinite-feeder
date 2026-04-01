@@ -4,6 +4,29 @@
     min-width: 250px;
 }
 
+.tab-container {
+}
+
+.tab-row {
+    display: flex;
+    list-style-type: none;
+}
+
+.tab {
+    border: 2px solid;
+    border-radius: 2px;
+    padding: 8px;
+}
+
+.tab-inactive {
+    text-decoration: italic;
+}
+
+.tab-active {
+    text-decoration: bold;
+    background-color: #cccccc;
+}
+
 td {
     padding-right: 10px;
 }

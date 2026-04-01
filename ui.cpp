@@ -13,6 +13,7 @@
 #include "wifi.h"
 
 #include "index.html.h"
+#include "config.html.h"
 #include "infinite-feeder.css.h"
 #include "favicon.ico.h"
 
@@ -383,7 +384,8 @@ static void threads_main(int argc, char **argv) {
     printf("Creating Httpd server\n");
     auto httpd = new HttpdServer(httpd_config.port);
     httpd->add_file_handler("/", new HttpdRedirectHandler("/index.html"));
-    httpd->add_file_handler("/index.html", new HttpdHandler(new StaticHandler(index_html, index_html_len)));
+    httpd->add_file_handler("/index.html", new StaticHandler(index_html, index_html_len));
+    httpd->add_file_handler("/config.html", new HttpdHandler(new StaticHandler(config_html, config_html_len)));
     httpd->add_file_handler("/infinite-feeder.css", new StaticHandler(infinite_feeder_css, infinite_feeder_css_len));
     httpd->add_file_handler("/favicon.ico", new StaticHandler(favicon_ico, favicon_ico_len));
 

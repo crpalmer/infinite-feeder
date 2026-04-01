@@ -1,0 +1,169 @@
+<!doctype html>
+<html>
+  <head>
+    <Title>Infinite Feeder</title>
+    <link rel="stylesheet" href="infinite-feeder.css"/>
+    <script src="https://cdn.jsdelivr.net/npm/@imacrayon/alpine-ajax@0.12.7/dist/cdn.min.js" defer></script>
+    <script src="http://unpkg.com/alpinejs" defer></script>
+  </head>
+  <body>
+    <nav class="tab-container">
+      <ul class="tab-row">
+        <li class="tab tab-inactive"><a href="index.html">Status</a></li>
+        <li class="tab tab-active">Configuration</li>
+      </ul>
+    </nav>
+    <form x-target="config-form" id="config-form" method="POST">
+      <h2>Lane Configuration</h2>
+      <table>
+	<tr>
+	  <th></th>
+	  <th>Lane 1</th>
+	  <th>Lane 2</th>
+        </tr>
+	<tr>
+	  <td class="form-label"><label for="lane1_present">Filament Present: </label></td>
+	  <td class="form-value"><select id="lane1_present" name="lane1_present" x-data="{ value: @@lane1_present@@ }">@@PIN_SELECT_OPTIONS@@</select></td>
+	  <td class="form-value"><select id="lane2_present" name="lane2_present" x-data="{ value: @@lane2_present@@ }">@@PIN_SELECT_OPTIONS@@</select></td>
+	</tr>
+	<tr>
+	  <td class="form-label"><label for="lane1_loaded">Filament Loaded: </label></td>
+	  <td class="form-value"><select id="lane1_loaded" name="lane1_loaded" x-data="{ value: @@lane1_loaded@@ }">@@PIN_SELECT_OPTIONS@@</select></td>
+	  <td class="form-value"><select id="lane2_loaded" name="lane2_loaded" x-data="{ value: @@lane2_loaded@@ }">@@PIN_SELECT_OPTIONS@@</select></td>
+	</tr>
+	<tr>
+	  <td class="form-label"><label for="lane1_enable">Stepper Enabled: </label></td>
+	  <td class="form-value"><select id="lane1_enable" name="lane1_enable" x-data="{ value: @@lane1_enable@@ }">@@PIN_SELECT_OPTIONS@@</select></td>
+	  <td class="form-value"><select id="lane2_enable" name="lane2_enable" x-data="{ value: @@lane2_enable@@ }">@@PIN_SELECT_OPTIONS@@</select></td>
+	</tr>
+	<tr>
+	  <td class="form-label"><label for="lane1_dir">Stepper Dir: </label></td>
+	  <td class="form-value"><select id="lane1_dir" name="lane1_dir" x-data="{ value: @@lane1_dir@@ }">@@PIN_SELECT_OPTIONS@@</select></td>
+	  <td class="form-value"><select id="lane2_dir" name="lane2_dir" x-data="{ value: @@lane2_dir@@ }">@@PIN_SELECT_OPTIONS@@</select></td>
+	</tr>
+	<tr>
+	  <td class="form-label"><label for="lane1_step">Stepper Step: </label></td>
+	  <td class="form-value"><select id="lane1_step" name="lane1_step" x-data="{ value: @@lane1_step@@ }">@@PIN_SELECT_OPTIONS@@</select></td>
+	  <td class="form-value"><select id="lane2_step" name="lane2_step" x-data="{ value: @@lane2_step@@ }">@@PIN_SELECT_OPTIONS@@</select></td>
+	</tr>
+	<tr>
+	  <td class="form-label"><label for="lane1_uart_address">Stepper UART Address: </label></td>
+	  <td class="form-value"><select id="lane1_uart_address" name="lane1_uart_address" x-data="{ value: @@lane1_uart_address@@ }">@@UART_ADDRESS_SELECT_OPTIONS@@</select></td>
+	  <td class="form-value"><select id="lane2_uart_address" name="lane2_uart_address" x-data="{ value: @@lane2_uart_address@@ }">@@UART_ADDRESS_SELECT_OPTIONS@@</select></td>
+	</tr>
+	<tr>
+	  <td class="form-label"><label for="lane1_invert">Stepper Direction: </label></td>
+	  <td class="form-value">
+	    <select id="lane1_invert" name="lane1_invert" x-data="{ value: @@lane1_invert@@ }">
+	      <option name="Forward" value="0" :selected="value == 0">Forward</option>
+	      <option name="Backward" value="1" :selected="value == 1">Backward</option>
+	    </select>
+	  </td>
+	  <td class="form-value">
+	    <select id="lane2_invert" name="lane2_invert" x-data="{ value: @@lane2_invert@@ }">
+	      <option name="Forward" value="0" :selected="value == 0">Forward</option>
+	      <option name="Backward" value="1" :selected="value == 1">Backward</option>
+	    </select>
+	  </td>
+	</tr>
+      </table>
+      <h2>Motor Configuration</h2>
+      <table>
+	<tr>
+	  <td class="form-label"><label for="motor_rx">TX: </label></td>
+	  <td class="form-value"><select id="motor_rx" name="motor_rx" x-data="{ value: @@motor_rx@@ }">@@PIN_SELECT_OPTIONS@@</select></td>
+	</tr>
+	<tr>
+	  <td class="form-label"><label for="motor_tx">RX: </label></td>
+	  <td class="form-value"><select id="motor_tx" name="motor_tx" x-data="{ value: @@motor_tx@@ }">@@PIN_SELECT_OPTIONS@@</select></td>
+	</tr>
+	<tr>
+	  <td class="form-label"><label for="motor_rms_current">RMS Current: </label></td>
+	  <td class="form-value"><input type="number" id="motor_rms_current" name="motor_rms_current" min="100" max="2000" value="@@motor_rms_current@@" /></td>
+	</tr>
+	<tr>
+	  <td class="form-label"><label for="motor_microstepping">Microsteps: </label></td>
+	  <td class="form-value">
+	    <select name="motor_microstepping" id="motor_microstepping" x-data="{ value: @@motor_microstepping@@ }">
+	      <option value="1" :selected="value == 1">1</option>
+	      <option value="2" :selected="value == 2">2</option>
+	      <option value="4" :selected="value == 4">4</option>
+	      <option value="8" :selected="value == 8">8</option>
+	      <option value="16" :selected="value == 16">16</option>
+	      <option value="32" :selected="value == 32">32</option>
+	      <option value="64" :selected="value == 64">64</option>
+	      <option value="128" :selected="value == 128">128</option>
+	    </select>
+	  </td>
+	</tr>
+	<tr>
+	  <td class="form-label"><label for="motor_steps_per_mm">Steps/mm: </label></td>
+	  <td class="form-value"><input type="number" id="motor_steps_per_mm" name="motor_steps_per_mm" min="1" max="99999" value="@@motor_steps_per_mm@@" /></td>
+        </tr>
+	<tr>
+	  <td class="form-label"><label for="motor_preload_speed">Preload speed (mm/sec): </label></td>
+	  <td class="form-value"><input type="number" id="motor_preload_speed" name="motor_preload_speed" min="1" max="99999" value="@@motor_preload_speed@@" /></td>
+        </tr>
+	<tr>
+	  <td class="form-label"><label for="motor_loading_speed">Loading speed (mm/sec): </label></td>
+	  <td class="form-value"><input type="number" id="motor_loading_speed" name="motor_loading_speed" min="1" max="99999" value="@@motor_loading_speed@@" /></td>
+	</tr>
+	<tr>
+	  <td class="form-label"><label for="motor_refill_speed">Refill speed (mm/sec): </label></td>
+	  <td class="form-value"><input type="number" id="motor_refill_speed" name="motor_refill_speed" min="1" max="99999" value="@@motor_refill_speed@@" /></td>
+	</tr>
+      </table>
+      <h2>Buffer Configuration</h2>
+      <table>
+	<tr>
+	  <td class="form-label"><label for="buffer_input">Output: </label></td>
+	  <td class="form-value"><select id="buffer_input" name="buffer_input" x-data="{ value: @@buffer_input@@ }">
+@@PIN_SELECT_OPTIONS@@
+	</select></td>
+	</tr>
+	<tr>
+	  <td class="form-label"><label for="buffer_full">Full: </label></td>
+	  <td class="form-value"><select id="buffer_full" name="buffer_full" x-data="{ value: @@buffer_full@@ }">
+@@PIN_SELECT_OPTIONS@@
+	</select></td>
+	</tr>
+	<tr>
+	  <td class="form-label"><label for="buffer_empty">Empty: </label></td>
+	  <td class="form-value"><select id="buffer_empty" name="buffer_empty" x-data="{ value: @@buffer_empty@@ }">
+@@PIN_SELECT_OPTIONS@@
+	</select></td>
+	</tr>
+      </table>
+      <h2>Error Handling Configuration</h2>
+      <table>
+	<tr>
+	  <td class="form-label"><label for="error_rgb">Neopixel (RGB): </label></td>
+	  <td class="form-value"><select id="error_rgb" name="error_rgb" x-data="{ value: @@error_rgb@@ }">
+@@PIN_SELECT_OPTIONS@@
+	</select></td>
+	</tr>
+	<tr>
+	  <td class="form-label"><label for="error_mm_to_load">Expected loading distance (mm): </label></td>
+	  <td class="form-value"><input type="number" id="error_mm_to_load" name="error_mm_to_load" min="1" max="99999" value="@@error_mm_to_load@@" /></td>
+	</tr>
+	<tr>
+	  <td class="form-label"><label for="error_mm_to_retry">Expected retry distance (mm): </label></td>
+	  <td class="form-value"><input type="number" id="error_mm_to_retry" name="error_mm_to_retry" min="1" max="99999" value="@@error_mm_to_retry@@" /></td>
+	</tr>
+	<tr>
+	  <td class="form-label"><label for="error_mm_to_load2">Expected output loading distance (mm): </label></td>
+	  <td class="form-value"><input type="number" id="error_mm_to_load2" name="error_mm_to_load2" min="1" max="99999" value="@@error_mm_to_load2@@" /></td>
+	</tr>
+	<tr>
+	  <td class="form-label"><label for="error_y_output_timeout_us">Time to reach output (us): </label></td>
+	  <td class="form-value"><input type="number" id="error_y_output_timeout_us" name="error_y_output_timeout_us" min="1" max="99999999999" value="@@error_y_output_timeout_us@@" /></td>
+	</tr>
+	<tr>
+	  <td class="form-label"><label for="error_y_output_retract_mm">Retract on timeout (mm): </label></td>
+	  <td class="form-value"><input type="number" id="error_y_output_retract_mm" name="error_y_output_retract_mm" min="1" max="99999" value="@@error_y_output_retract_mm@@" /></td>
+	</tr>
+      </table>
+      <button type="submit">Save</button>
+    </form>
+  </body>
+</html>
