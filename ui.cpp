@@ -158,7 +158,6 @@ private:
     static const int CONFIG_OFFSET = 4096;
     static const uint32_t CONFIG_MAGIC = 0x87654321;
     static const int CONFIG_VERSION_OFFSET = CONFIG_OFFSET + sizeof(CONFIG_MAGIC);
-    static const uint32_t CONFIG_VERSION = 1;
     static const int CONFIG_DATA_OFFSET = CONFIG_VERSION_OFFSET + sizeof(CONFIG_VERSION);
 };
 
@@ -269,6 +268,7 @@ public:
 	map["buffer_full"] =  &config.buffer.full;
 	map["buffer_empty"] = &config.buffer.empty;
 
+	map["error_rgb"] =		   &config.error.rgb;
 	map["error_mm_to_load"] =          &config.error.mm_to_load;
 	map["error_mm_to_retry"] =         &config.error.mm_to_retry;
 	map["error_mm_to_load2"] =         &config.error.mm_to_load2;
