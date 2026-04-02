@@ -19,9 +19,9 @@ endfunction()
 
 function(pico_specific target)
     if("${PLATFORM}" STREQUAL "pico")
-        pico_enable_stdio_usb(firmware 1)
-        pico_enable_stdio_uart(firmware 0)
-        pico_add_extra_outputs(firmware)
+        pico_enable_stdio_usb("${target}" 1)
+        pico_enable_stdio_uart("${target}" 0)
+        pico_add_extra_outputs("${target}")
     endif()
 endfunction()
 
