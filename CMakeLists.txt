@@ -67,13 +67,3 @@ if ("${HAVE_NETWORKING}" STREQUAL "ON")
 
   pico_specific(ui)
 endif()
-
-add_executable(test test.cpp
-)
-
-target_link_libraries(test
-    lib-pi
-    lib-pi-threads
-)
-
-pico_specific(test)
