@@ -30,3 +30,14 @@
 td {
     padding-right: 10px;
 }
+
+.status-label {
+    padding-right: 8px;
+    text-align: right;
+}
+
+.status-cell {
+    padding-left: 20px;
+    padding-right: 20px;
+    text-align: center;
+}

@@ -14,18 +14,24 @@
       </ul>
     </nav>
     <table>
-      <tr><th/><th>Lane 1</th><th>Lane 2</th></tr>
-      <tr><td>State:</td><td>@@lane1_state@@</td><td>@@lane2_state@@</td></tr>
+      <tr><th class="status-label"/><th class="status-cell">Lane 1</th><th class="status-cell">Lane 2</th></tr>
       <tr>
-	<td>Filament</td>
-	<td x-data="{ present: @@lane1_present@@, loaded : @@lane1_loaded@@ }" >
-	  <span x-text="present && loaded ? 'present & loaded' : present ? 'present' : loaded ? 'loaded' : 'empty'" />
-	</td>
-	<td x-data="{ present: @@lane2_present@@, loaded : @@lane2_loaded@@ }" >
-	  <span x-text="present && loaded ? 'present & loaded' : present ? 'present' : loaded ? 'loaded' : 'empty'" />
+	<td class="status-label">Buffer Status:</td>
+	<td class="status-cell" x-data="{ full: @@buffer_full@@, empty : @@buffer_empty@@ }" colspan="2" >
+	  <span x-text="full && empty ? 'full & empty??' : full ? 'full' : empty ? 'empty' : 'partially fed'"></span>
 	</td>
       </tr>
-      <tr><td>Filament fed (mm):</td><td>@@lane1_mm@@</td><td>@@lane2_mm@@</td></tr>
+      <tr><td class="status-label">Current State:</td><td class="status-cell">@@lane1_state@@</td><td class="status-cell">@@lane2_state@@</td></tr>
+      <tr>
+	<td class="status-label">Filament Status:</td>
+	<td class="status-cell" x-data="{ present: @@lane1_present@@, loaded : @@lane1_loaded@@ }" >
+	  <span x-text="present && loaded ? 'present & loaded' : present ? 'present' : loaded ? 'loaded' : 'empty'"></span>
+	</td>
+	<td class="status-cell" x-data="{ present: @@lane2_present@@, loaded : @@lane2_loaded@@ }" >
+	  <span x-text="present && loaded ? 'present & loaded' : present ? 'present' : loaded ? 'loaded' : 'empty'"></span>
+	</td>
+      </tr>
+      <tr><td class="status-label">Filament fed (mm):</td><td class="status-cell">@@lane1_mm@@</td><td class="status-cell">@@lane2_mm@@</td></tr>
     </table>
   </body>
 </html>
