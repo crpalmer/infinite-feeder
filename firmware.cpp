@@ -10,6 +10,7 @@
 #include "i2c.h"
 #include "neopixel-pico.h"
 #include "pi-threads.h"
+#include "status.h"
 #include "stepper.h"
 #include "string-utils.h"
 #include "thread-interrupt-notifier.h"
@@ -23,6 +24,85 @@ static int CONFIG_VERSION_OFFSET = CONFIG_OFFSET + sizeof(CONFIG_MAGIC);
 static int CONFIG_DATA_OFFSET = CONFIG_VERSION_OFFSET + sizeof(CONFIG_VERSION);
 
 static config_t config = factory_config;
+static class Coordinator *coordinator;
+
+class Channel : public UARTChannel {
+public:
+    Channel(int tx_pin, int rx_pin) : UARTChannel(tx_pin, rx_pin) {
+	lock = new PiMutex();
+	pong = new PiCond();
+	config_cond = new PiCond();
+    }
+
+    void send_command(int cmd, const void *data = NULL, int n_data = 0) override {
+	lock->lock();
+	send_command_locked(cmd, data, n_data);
+	lock->unlock();
+    }
+
+    void on_command(int _cmd, const void *data, int n_data) override;
+
+    bool ping(int wait_ms = -1) {
+	bool ret = false;
+
+	lock->lock();
+	send_command_locked(CMD_PING);
+	if (wait_ms >= 0) {
+	    ret = pong->wait_for(lock, wait_ms * 1000);
+	}
+	lock->unlock();
+
+	return ret;
+    }
+
+    void send_status(status_t *status) {
+	send_command(CMD_STATUS, status, sizeof(*status));
+    }
+
+    void get_config() {
+	lock->lock();
+printf("asking for config\n");
+	send_command_locked(CMD_GET_CONFIG);
+	while (! config_cond->wait_for(lock, 1000*1000)) {
+printf("retry\n");
+	    send_command_locked(CMD_GET_CONFIG);
+	}
+printf("got my config!\n");
+	lock->unlock();
+    }
+
+private:
+    void send_command_locked(int cmd, const void *data = NULL, int n_data = 0) {
+	UARTChannel::send_command(cmd, data, n_data);
+    }
+
+private:
+    PiMutex *lock;
+    PiCond *pong;
+    PiCond *config_cond;
+    bool made_contact = false;
+    config_t last_config;
+};
+
+class ChannelProber : public PiThread {
+public:
+    ChannelProber(Channel *channel) : PiThread("channel-prober"), channel(channel) {
+	start();
+    }
+
+    void main(void) override {
+	uint64_t n_tries = 0;
+
+	printf("channel-prober: running, trying to contact the remote pico\n");
+	while (! channel->ping(1000)) {
+	    if ((n_tries++ % 50) == 0) printf("channel-prober: still trying.\n");
+	}
+	printf("channel: contact initiated, exiting\n");
+    }
+
+private:
+    Channel *channel;
+};
 
 class Lights {
 public:
@@ -71,18 +151,25 @@ public:
     ~PersistentStorage() { }
     virtual bool load(config_t *c) = 0;
     virtual bool save(const config_t *c) = 0;
+    virtual bool is_readonly() { return true; }
 };
 
 class PicoPersistentStorage : public PersistentStorage {
 public:
+    PicoPersistentStorage(Channel *channel) : channel(channel) {
+    }
+
     bool load(config_t *c) override {
-	*c = factory_config;
+	channel->get_config();
 	return true;
     }
 
     bool save(const config_t *c) override {
 	return false;
     }
+
+private:
+    Channel *channel;
 };
 
 class FRAMPersistentStorage : public PersistentStorage {
@@ -91,6 +178,8 @@ public:
 	i2c_init_bus(I2C_BUS, I2C_SDA, I2C_SCL);
 	fram = new FRAM_MB85C(I2C_BUS);
     }
+
+    bool is_readonly() override { return false; }
 
     bool load(config_t *c) override {
 	uint32_t magic;
@@ -145,7 +234,7 @@ static void read_int(bool validate_only, const char *prompt, int *value, int min
     char line[128];
     int new_value;
 
-    if (validate_only) {
+    if (validate_only || storage->is_readonly()) {
 	new_value = *value;
     } else {
 	printf("%s [%3d]: ", prompt, *value);
@@ -520,6 +609,13 @@ public:
 	printf(" target_mm %.2f", target_mm);
     }
 
+    void get_status(lane_status_t *status) {
+	strcpy(status->state, state_to_string(state));
+	status->present = lane_switches->is_present();
+	status->loaded = lane_switches->is_loaded();
+	status->mm = stepper->get_mm_moved();
+    }
+
     void error() {
 	stepper->set_speed(0);
 	state = STOP;
@@ -633,7 +729,7 @@ private:
 
 class Coordinator : public PiThread {
 public:
-    Coordinator(Lights *lights) : PiThread("coordinator") {
+    Coordinator(Lights *lights, Channel *channel) : PiThread("coordinator"), lights(lights), channel(channel) {
 	lock = new PiMutex();
 	cond = new PiCond();
 
@@ -722,6 +818,16 @@ public:
 	printf("\n");
     }
 
+    void send_status() {
+	status_t status;
+	lane_1->get_status(&status.lanes[0]);
+	lane_2->get_status(&status.lanes[1]);
+	status.y_output = buffer_switches->has_y_output();
+	status.buffer_full = buffer_switches->buffer_is_full();
+	status.buffer_empty = buffer_switches->buffer_is_empty();
+	channel->send_status(&status);
+    }
+
     void stop() {
 	lane_1->stop();
 	lane_2->stop();
@@ -755,6 +861,9 @@ private:
     }
 
 private:
+    Lights *lights;
+    Channel *channel;
+
     PiMutex *lock;
     PiCond *cond;
     ThreadCondNotifier *notifier;
@@ -805,74 +914,36 @@ private:
     bool enabled = false;
 };
 
-class Channel : public UARTChannel {
-public:
-    Channel(int tx_pin, int rx_pin) : UARTChannel(tx_pin, rx_pin) {
-	lock = new PiMutex();
-	pong = new PiCond();
-    }
-
-    void send_command(int cmd, const void *data = NULL, int n_data = 0) override {
-	lock->lock();
-	send_command_locked(cmd, data, n_data);
-	lock->unlock();
-    }
-
-    void on_command(int _cmd, const void *data, int n_data) override {
-        cmd_t cmd = (cmd_t) _cmd;
-        switch(cmd) {
-        case CMD_PING:
-	    send_command(CMD_PONG);
-	    break;
-        case CMD_PONG:
-	    pong->broadcast();
-	    break;
-        }
-    }
-
-    bool ping(int wait_ms = -1) {
-	bool ret = false;
-
-	lock->lock();
-	send_command_locked(CMD_PING);
-	if (wait_ms >= 0) {
-	    ret = pong->wait_for(lock, wait_ms * 1000);
+void Channel::on_command(int _cmd, const void *data, int n_data) {
+    cmd_t cmd = (cmd_t) _cmd;
+    switch(cmd) {
+    case CMD_PING:
+	send_command(CMD_PONG);
+	break;
+    case CMD_PONG:
+	pong->broadcast();
+	break;
+    case CMD_STATUS:
+    case CMD_GET_CONFIG:
+	assert(0);
+	break;
+    case CMD_GET_STATUS:
+	coordinator->send_status();
+	break;
+    case CMD_CONFIG_BLOB:
+	if (n_data != sizeof(config)) {
+	    printf("channel: received %d bytes of configuration and was expecting %d\n", n_data, (int) sizeof(config));
+	} else {
+	    printf("channel: received config blob\n");
+	    memcpy(&config, data, n_data);
+	    config_cond->signal();
 	}
-	lock->unlock();
-
-	return ret;
+	break;
+    case CMD_NEW_CONFIG_AVAILABLE:
+	printf("channel: new configuration is available, rebooting to get it.\n");
+	pi_reboot();
     }
-
-private:
-    void send_command_locked(int cmd, const void *data = NULL, int n_data = 0) {
-	UARTChannel::send_command(cmd, data, n_data);
-    }
-
-private:
-    PiMutex *lock;
-    PiCond *pong;
-    bool made_contact = false;
-};
-
-class ChannelProber : public PiThread {
-public:
-    ChannelProber(Channel *channel) : PiThread("channel-prober"), channel(channel) {
-	start();
-    }
-
-    void main(void) override {
-	uint64_t n_tries = 0;
-
-	printf("channel-prober: running, trying to contact the remote pico\n");
-	while (! channel->ping(1000)) {
-	    if ((n_tries++ % 50) == 0) printf("channel-prober: still trying.\n");
-	}
-	printf("channel: contact initiated, exiting\n");
-    }
-
-private:
-    Channel *channel;
-};
+}
 
 static void threads_main(int argc, char **argv) {
     ms_sleep(2000);
@@ -888,11 +959,11 @@ static void threads_main(int argc, char **argv) {
 	printf("FRAM doesn't exist, trying to talk to a pico for persistent storage.\n");
 	channel = new Channel(0, 1);
 	new ChannelProber(channel);
-	storage = new PicoPersistentStorage();
+	storage = new PicoPersistentStorage(channel);
     }
 
     if (! storage->load(&config)) printf("FAILED to load existing configuration\n");
-    Coordinator *coordinator = new Coordinator(lights);
+    coordinator = new Coordinator(lights, channel);
     StateDumper *state_dumper = new StateDumper(coordinator);
 
     printf("Created coordinator, entering interactive loop.\n");

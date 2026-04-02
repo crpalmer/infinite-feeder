@@ -6,6 +6,7 @@
 #include "fram-mb85c.h"
 #include "httpd-server.h"
 #include "pi-threads.h"
+#include "status.h"
 #include "stdin-reader.h"
 #include "stdout-writer.h"
 #include "threads-console.h"
@@ -35,6 +36,10 @@ static httpd_config_t httpd_config = {
 static config_t config = factory_config;
 
 static class Storage *storage;
+static class Channel *channel;
+
+static status_t status = empty_status;
+static PiMutex *status_lock;
 
 #ifdef PLATFORM_linux
 #include "file.h"
@@ -74,6 +79,66 @@ public:
 
 private:
     FILE *f;
+};
+#endif
+
+#ifndef PLATFORM_linux
+class Channel : public UARTChannel {
+public:
+    Channel(int tx_pin, int rx_pin) : UARTChannel(tx_pin, rx_pin) {
+	lock = new PiMutex();
+	status_cond = new PiCond();
+    }
+
+    void on_command(int _cmd, const void *data, int n_data) override {
+	cmd_t cmd = (cmd_t) _cmd;
+	switch(cmd) {
+	case CMD_PING: send_command(CMD_PONG); break;
+	case CMD_PONG: printf("got my pong\n"); break;
+	case CMD_STATUS:
+	    if (n_data != sizeof(status)) {
+		printf("channel: invalid status received (%d bytes when expecting %d bytes)\n", n_data, sizeof(status));
+	    } else {
+		status_lock->lock();
+		memcpy(&status, data, n_data);
+		status_lock->unlock();
+		status_cond->broadcast();
+	    }
+	    break;
+	case CMD_GET_CONFIG:
+	    send_command(CMD_CONFIG_BLOB, &config, sizeof(config));
+	    break;
+	case CMD_CONFIG_BLOB:
+	case CMD_GET_STATUS:
+	case CMD_NEW_CONFIG_AVAILABLE:
+	    printf("channel: received unexpected command %d\n", cmd);
+	    break;
+	}
+    }
+
+    void get_status() {
+	lock->lock();
+	send_command(CMD_GET_STATUS);
+	while (! status_cond->wait_for(lock, 1000*1000)) {
+	    send_command(CMD_GET_STATUS);
+	}
+	lock->unlock();
+    }
+
+    void send_config() {
+	send_command(CMD_NEW_CONFIG_AVAILABLE);
+    }
+
+private:
+    PiMutex *lock;
+    PiCond *status_cond;
+};
+#else
+class Channel {
+public:
+    Channel(int tx, int rx) {}
+    void get_status() {}
+    void send_config() {}
 };
 #endif
 
@@ -140,6 +205,7 @@ public:
         uint32_t version = CONFIG_VERSION;
         if (! fram->write(CONFIG_VERSION_OFFSET, &version, sizeof(version))) return false;
         if (! fram->write(CONFIG_DATA_OFFSET, c, sizeof(*c))) return false;
+	channel->send_config();
         return true;
     }
 
@@ -161,22 +227,6 @@ private:
     static const int CONFIG_VERSION_OFFSET = CONFIG_OFFSET + sizeof(CONFIG_MAGIC);
     static const int CONFIG_DATA_OFFSET = CONFIG_VERSION_OFFSET + sizeof(CONFIG_VERSION);
 };
-
-#ifndef PLATFORM_linux
-class Channel : public UARTChannel {
-public:
-    Channel(int tx_pin, int rx_pin) : UARTChannel(tx_pin, rx_pin) {
-    }
-
-    void on_command(int _cmd, const void *data, int n_data) override {
-	cmd_t cmd = (cmd_t) _cmd;
-	switch(cmd) {
-	case CMD_PING: send_command(CMD_PONG); break;
-	case CMD_PONG: printf("got my pong\n"); break;
-	}
-    }
-};
-#endif
 
 class HttpdConsole : public PiThread, public ThreadsConsole {
 public:
@@ -235,7 +285,7 @@ public:
     StaticHandler(const uint8_t *data, size_t len) : data(data), len(len) {
     }
 
-    HttpdResponse *open(HttpdRequest *request) {
+    HttpdResponse *open(HttpdRequest *request) override {
 	return new HttpdResponse(new MemoryBuffer(data, len));
     }
 
@@ -244,9 +294,61 @@ private:
     size_t len;
 };
 
-class HttpdHandler : public HttpdSubstitutionHandler {
+class StatusHandler : public HttpdSubstitutionHandler {
 public:
-    HttpdHandler(HttpdFilenameHandler *base) : HttpdSubstitutionHandler(base) {
+    StatusHandler(HttpdFilenameHandler *base) : HttpdSubstitutionHandler(base) {
+	for (int lane = 0; lane < 2; lane++) {
+	    insert_lane_item(lane, "state", status.lanes[lane].state);
+	    insert_lane_item(lane, "mm", &status.lanes[lane].mm);
+	    insert_lane_item(lane, "present", &status.lanes[lane].present);
+	    insert_lane_item(lane, "loaded", &status.lanes[lane].loaded);
+	    bool present = status.lanes[lane].present;
+	    bool loaded = status.lanes[0].loaded;
+	    insert_lane_item(lane, "filament_state", present && loaded ? "present and loaded" : present ? "present" : loaded ? "loaded" : "empty");
+	}
+	imap["y_output"] = &status.y_output;
+	imap["buffer_full"] = &status.buffer_full;
+	imap["buffer_empty"] = &status.buffer_empty;
+    }
+
+    const char *get_value_of(const char *key) {
+	if (smap[key]) {
+	    return smap[key];
+	}
+
+	if (imap[key]) {
+	    sprintf(tmp_string, "%d", *imap[key]);
+	    return tmp_string;
+	}
+	return NULL;
+    }
+
+    HttpdResponse *open(HttpdRequest *request) override {
+	channel->get_status();
+	return HttpdSubstitutionHandler::open(request);
+    }
+
+private:
+    void insert_lane_item(int lane, const char *name, const int *ptr) {
+	char full[10 + strlen(name)];
+	sprintf(full, "lane%d_%s", lane+1, name);
+	imap[full] = ptr;
+    }
+
+    void insert_lane_item(int lane, const char *name, const char *ptr) {
+	char full[10 + strlen(name)];
+	sprintf(full, "lane%d_%s", lane+1, name);
+	smap[full] = ptr;
+    }
+
+    std::unordered_map<std::string, const char *> smap;
+    std::unordered_map<std::string, const int *> imap;
+    char tmp_string[50];
+};
+
+class ConfigHandler : public HttpdSubstitutionHandler {
+public:
+    ConfigHandler(HttpdFilenameHandler *base) : HttpdSubstitutionHandler(base) {
 	for (int lane = 0; lane < 2; lane++) {
 	    insert_lane_item(lane, "present",         &config.lanes[lane].present);
 	    insert_lane_item(lane, "loaded",          &config.lanes[lane].loaded);
@@ -376,16 +478,16 @@ static void threads_main(int argc, char **argv) {
     if (storage->load_config(&config)) printf("Loaded firmware config\n");
     else printf("Failed to load previous firmware config\n");
 
-#ifndef PLATFORM_linux
+    status_lock = new PiMutex();
+
     printf("Creating channel to the SKR Pico\n");
-    new Channel(0, 1);
-#endif
+    channel = new Channel(0, 1);
 
     printf("Creating Httpd server\n");
     auto httpd = new HttpdServer(httpd_config.port);
     httpd->add_file_handler("/", new HttpdRedirectHandler("/index.html"));
-    httpd->add_file_handler("/index.html", new StaticHandler(index_html, index_html_len));
-    httpd->add_file_handler("/config.html", new HttpdHandler(new StaticHandler(config_html, config_html_len)));
+    httpd->add_file_handler("/index.html", new StatusHandler(new StaticHandler(index_html, index_html_len)));
+    httpd->add_file_handler("/config.html", new ConfigHandler(new StaticHandler(config_html, config_html_len)));
     httpd->add_file_handler("/infinite-feeder.css", new StaticHandler(infinite_feeder_css, infinite_feeder_css_len));
     httpd->add_file_handler("/favicon.ico", new StaticHandler(favicon_ico, favicon_ico_len));
 

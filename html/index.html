@@ -13,6 +13,19 @@
 	<li class="tab tab-inactive"><a href="config.html">Configuration</a></li>
       </ul>
     </nav>
-      test
+    <table>
+      <tr><th/><th>Lane 1</th><th>Lane 2</th></tr>
+      <tr><td>State:</td><td>@@lane1_state@@</td><td>@@lane2_state@@</td></tr>
+      <tr>
+	<td>Filament</td>
+	<td x-data="{ present: @@lane1_present@@, loaded : @@lane1_loaded@@ }" >
+	  <span x-text="present && loaded ? 'present & loaded' : present ? 'present' : loaded ? 'loaded' : 'empty'" />
+	</td>
+	<td x-data="{ present: @@lane2_present@@, loaded : @@lane2_loaded@@ }" >
+	  <span x-text="present && loaded ? 'present & loaded' : present ? 'present' : loaded ? 'loaded' : 'empty'" />
+	</td>
+      </tr>
+      <tr><td>Filament fed (mm):</td><td>@@lane1_mm@@</td><td>@@lane2_mm@@</td></tr>
+    </table>
   </body>
 </html>
