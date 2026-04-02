@@ -48,23 +48,25 @@ if("${PLATFORM}" STREQUAL "pico")
     pico_specific(firmware)
 endif()
 
-add_executable(ui ui.cpp
-  uart-channel.cpp
-)
+if ("${HAVE_NETWORKING}" STREQUAL "ON")
+  add_executable(ui ui.cpp
+    uart-channel.cpp
+  )
 
-target_include_directories(ui PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
-file_to_h(ui ${CMAKE_CURRENT_LIST_DIR}/html/index.html ${CMAKE_CURRENT_BINARY_DIR})
-file_to_h(ui ${CMAKE_CURRENT_LIST_DIR}/html/config.html ${CMAKE_CURRENT_BINARY_DIR})
-file_to_h(ui ${CMAKE_CURRENT_LIST_DIR}/html/infinite-feeder.css ${CMAKE_CURRENT_BINARY_DIR})
-file_to_h(ui ${CMAKE_CURRENT_LIST_DIR}/html/favicon.ico ${CMAKE_CURRENT_BINARY_DIR})
+  target_include_directories(ui PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+  file_to_h(ui ${CMAKE_CURRENT_LIST_DIR}/html/index.html ${CMAKE_CURRENT_BINARY_DIR})
+  file_to_h(ui ${CMAKE_CURRENT_LIST_DIR}/html/config.html ${CMAKE_CURRENT_BINARY_DIR})
+  file_to_h(ui ${CMAKE_CURRENT_LIST_DIR}/html/infinite-feeder.css ${CMAKE_CURRENT_BINARY_DIR})
+  file_to_h(ui ${CMAKE_CURRENT_LIST_DIR}/html/favicon.ico ${CMAKE_CURRENT_BINARY_DIR})
 
-target_link_libraries(ui
+  target_link_libraries(ui
     lib-pi
     lib-pi-net
     lib-pi-threads
-)
+  )
 
-pico_specific(ui)
+  pico_specific(ui)
+endif()
 
 add_executable(test test.cpp
 )
