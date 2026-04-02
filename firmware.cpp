@@ -139,6 +139,7 @@ public:
     void emptying() { lights->set(bulb, 128, 0, 128); }
     void feeding() { lights->set(bulb, 0, 255, 0); }
     void waiting() { lights->set(bulb, 0, 128, 0); }
+    void retract() { lights->set(bulb, 100, 175, 100); }
     void stop() { error(); }
 
 private:
@@ -564,6 +565,7 @@ public:
 		else if (! buffer_is_full) state = FEED;
 		break;
 	    case RETRACT:
+		light->retract();
 		if (! is_present) state = STOP;
 		else feed = manual_feed;
 		break;
