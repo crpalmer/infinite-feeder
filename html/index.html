@@ -13,25 +13,54 @@
 	<li class="tab tab-inactive"><a href="config.html">Configuration</a></li>
       </ul>
     </nav>
-    <table>
-      <tr><th class="status-label"/><th class="status-cell">Lane 1</th><th class="status-cell">Lane 2</th></tr>
-      <tr>
-	<td class="status-label">Buffer Status:</td>
-	<td class="status-cell" x-data="{ full: @@buffer_full@@, empty : @@buffer_empty@@ }" colspan="2" >
-	  <span x-text="full && empty ? 'full & empty??' : full ? 'full' : empty ? 'empty' : 'partially fed'"></span>
-	</td>
-      </tr>
-      <tr><td class="status-label">Current State:</td><td class="status-cell">@@lane1_state@@</td><td class="status-cell">@@lane2_state@@</td></tr>
-      <tr>
-	<td class="status-label">Filament Status:</td>
-	<td class="status-cell" x-data="{ present: @@lane1_present@@, loaded : @@lane1_loaded@@ }" >
-	  <span x-text="present && loaded ? 'present & loaded' : present ? 'present' : loaded ? 'loaded' : 'empty'"></span>
-	</td>
-	<td class="status-cell" x-data="{ present: @@lane2_present@@, loaded : @@lane2_loaded@@ }" >
-	  <span x-text="present && loaded ? 'present & loaded' : present ? 'present' : loaded ? 'loaded' : 'empty'"></span>
-	</td>
-      </tr>
-      <tr><td class="status-label">Filament fed (mm):</td><td class="status-cell">@@lane1_mm@@</td><td class="status-cell">@@lane2_mm@@</td></tr>
-    </table>
+    <div class="status">
+      <div class="status-global">
+        <h2>Status</h2>
+        <table>
+	  <tbody>
+            <tr>
+	      <td class="status-label">Uptime:</td>
+	      <td class="status-cell" x-data="{ days : Math.trunc(@@uptime@@ / (24*60*60)), hours: Math.trunc(@@uptime@@ / (60*60)) % 24, minutes: Math.trunc(@@uptime@@ / 60) % 60, seconds: @@uptime@@ % 60 }">
+		<span x-show="days > 0"><span x-text="days"></span> days </span>
+		<span x-show="days > 0 || hours > 0"><span x-text="String(hours).padStart(2, '0')"></span>:</span><span x-text="String(minutes).padStart(2, '0')"></span>:</span><span x-text="String(seconds).padStart(2, '0')"></span>
+	    </tr>
+	    <tr>
+	      <td class="status-label">Buffer Status:</td>
+	      <td class="status-cell" x-data="{ full: @@buffer_full@@, empty : @@buffer_empty@@ }" >
+	        <span x-text="full && empty ? 'full & empty??' : full ? 'full' : empty ? 'empty' : 'partially fed'"></span>
+	      </td>
+            </tr>
+	  </tbody>
+        </table>
+      </div>
+      <div class="status-lanes">
+        <div x-data="{ is_active: @@active_lane@@ == 0, is_ready : '@@lane1_state@@' == 'READY' }" :class="{ 'lane-active status-lane': is_active, 'lane-ready status-lane': is_ready, 'status-lane': ! is_active }">
+          <h2>Lane 1</h2>
+          <table>
+            <tr><td class="status-label">Current State:</td><td class="status-cell">@@lane1_state@@</td></tr>
+            <tr>
+	      <td class="status-label">Filament Status:</td>
+	      <td class="status-cell" x-data="{ present: @@lane1_present@@, loaded : @@lane1_loaded@@ }" >
+	        <span x-text="present && loaded ? 'present & loaded' : present ? 'present' : loaded ? 'loaded' : 'empty'"></span>
+	      </td>
+            </tr>
+            <tr><td class="status-label">Filament fed (mm):</td><td class="status-cell">@@lane1_mm@@</td></tr>
+          </table>
+        </div>
+        <div x-data="{ is_active: @@active_lane@@ == 1, is_ready : '@@lane2_state@@' == 'READY' }" :class="{ 'lane-active status-lane': is_active, 'lane-ready status-lane': is_ready, 'status-lane': ! is_active }">
+          <h2>Lane 2</h2>
+          <table>
+            <tr><td class="status-label">Current State:</td><td class="status-cell">@@lane2_state@@</td></tr>
+            <tr>
+	      <td class="status-label">Filament Status:</td>
+	      <td class="status-cell" x-data="{ present: @@lane2_present@@, loaded : @@lane2_loaded@@ }" >
+	        <span x-text="present && loaded ? 'present & loaded' : present ? 'present' : loaded ? 'loaded' : 'empty'"></span>
+	      </td>
+            </tr>
+            <tr><td class="status-label">Filament fed (mm):</td><td class="status-cell">@@lane2_mm@@</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
   </body>
 </html>

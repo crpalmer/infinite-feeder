@@ -25,6 +25,7 @@ static int CONFIG_DATA_OFFSET = CONFIG_VERSION_OFFSET + sizeof(CONFIG_VERSION);
 
 static config_t config = factory_config;
 static class Coordinator *coordinator;
+static us_time_t boot_at;
 
 class Channel : public UARTChannel {
 public:
@@ -824,6 +825,10 @@ public:
 	status_t status;
 	lane_1->get_status(&status.lanes[0]);
 	lane_2->get_status(&status.lanes[1]);
+	status.uptime = us_elapsed_ms_now(&boot_at) / 1000;
+	if (active_lane == lane_1) status.active_lane = 0;
+	else if (active_lane == lane_2) status.active_lane = 1;
+	else status.active_lane = -1;
 	status.y_output = buffer_switches->has_y_output();
 	status.buffer_full = buffer_switches->buffer_is_full();
 	status.buffer_empty = buffer_switches->buffer_is_empty();
@@ -951,6 +956,8 @@ static void threads_main(int argc, char **argv) {
     ms_sleep(2000);
     printf("Starting\n");
     Channel *channel = NULL;
+
+    boot_at = us_now();
 
     Lights *lights = new Lights();
 

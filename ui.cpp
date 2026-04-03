@@ -306,6 +306,8 @@ public:
 	    bool loaded = status.lanes[0].loaded;
 	    insert_lane_item(lane, "filament_state", present && loaded ? "present and loaded" : present ? "present" : loaded ? "loaded" : "empty");
 	}
+	imap["uptime"] = &status.uptime;
+	imap["active_lane"] = &status.active_lane;
 	imap["y_output"] = &status.y_output;
 	imap["buffer_full"] = &status.buffer_full;
 	imap["buffer_empty"] = &status.buffer_empty;
