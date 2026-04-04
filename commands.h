@@ -2,10 +2,12 @@
 #define __COMMANDS_H__
 
 typedef enum {
+    CMD_OKAY,
     CMD_PING, CMD_PONG,
     CMD_GET_CONFIG, CMD_CONFIG_BLOB,
     CMD_NEW_CONFIG_AVAILABLE,
     CMD_GET_STATUS, CMD_STATUS,
+    CMD_STOP, CMD_RESUME, CMD_RETRACT
 } cmd_t;
 
 #endif

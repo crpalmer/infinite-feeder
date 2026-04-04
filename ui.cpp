@@ -88,11 +88,15 @@ public:
     Channel(int tx_pin, int rx_pin) : UARTChannel(tx_pin, rx_pin) {
 	lock = new PiMutex();
 	status_cond = new PiCond();
+	okay_cond = new PiCond();
     }
 
     void on_command(int _cmd, const void *data, int n_data) override {
 	cmd_t cmd = (cmd_t) _cmd;
 	switch(cmd) {
+	case CMD_OKAY:
+	    okay_cond->broadcast();
+	    break;
 	case CMD_PING: send_command(CMD_PONG); break;
 	case CMD_PONG: printf("got my pong\n"); break;
 	case CMD_STATUS:
@@ -108,6 +112,9 @@ public:
 	case CMD_GET_CONFIG:
 	    send_command(CMD_CONFIG_BLOB, &config, sizeof(config));
 	    break;
+	case CMD_STOP:
+	case CMD_RESUME:
+	case CMD_RETRACT:
 	case CMD_CONFIG_BLOB:
 	case CMD_GET_STATUS:
 	case CMD_NEW_CONFIG_AVAILABLE:
@@ -117,28 +124,70 @@ public:
     }
 
     void get_status() {
-	lock->lock();
-	send_command(CMD_GET_STATUS);
-	while (! status_cond->wait_for(lock, 1000*1000)) {
-	    send_command(CMD_GET_STATUS);
-	}
-	lock->unlock();
+	send_synchronous_command(status_cond, CMD_GET_STATUS);
     }
 
     void send_config() {
 	send_command(CMD_NEW_CONFIG_AVAILABLE);
     }
 
+    void stop() {
+	send_synchronous_command(okay_cond, CMD_STOP);
+    }
+
+    void resume() {
+	send_synchronous_command(okay_cond, CMD_RESUME);
+    }
+
+    void retract(int lane) {
+	send_synchronous_command(okay_cond, CMD_RETRACT, &lane, sizeof(lane));
+    }
+
 private:
     PiMutex *lock;
+    PiCond *okay_cond;
     PiCond *status_cond;
+
+    void send_synchronous_command(PiCond *cond, cmd_t cmd, void *data = NULL, int len = 0) {
+	lock->lock();
+	send_command(cmd, data, len);
+	while (! status_cond->wait_for(lock, 1000*1000)) {
+	    send_command(cmd, data, len);
+	}
+	lock->unlock();
+    }
 };
 #else
 class Channel {
 public:
-    Channel(int tx, int rx) {}
-    void get_status() {}
+    Channel(int tx, int rx) {
+	boot_at = us_now();
+    }
+
+    void get_status() {
+        status.uptime = us_elapsed_ms_now(&boot_at) / 1000;
+    }
+
     void send_config() {}
+
+    void stop() {
+	status.active_lane = -1;
+	strcpy(status.lanes[0].state, "STOP");
+	strcpy(status.lanes[1].state, "STOP");
+    }
+
+    void resume() {
+	status.active_lane = 0;
+	strcpy(status.lanes[0].state, "ACTIVE");
+	strcpy(status.lanes[1].state, "READY");
+    }
+
+    void retract(int lane) {
+	strcpy(status.lanes[lane].state, "RETRACT");
+    }
+
+private:
+    us_time_t boot_at;
 };
 #endif
 
@@ -326,6 +375,15 @@ public:
     }
 
     HttpdResponse *open(HttpdRequest *request) override {
+	const char *action_c;
+	int action_len = request->get_parameter("action", &action_c);
+	if (action_len > 0) {
+	    std::string action = std::string(action_c, action_len);
+	    if (action == "stop") channel->stop();
+	    else if (action == "resume") channel->resume();
+	    else if (action == "retract1") channel->retract(0);
+	    else if (action == "retract2") channel->retract(1);
+	}
 	channel->get_status();
 	return HttpdSubstitutionHandler::open(request);
     }

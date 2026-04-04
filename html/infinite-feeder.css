@@ -1,3 +1,5 @@
+[x-cloak] { display: none !important; }
+
 .form-label {
     text-align: right;
     padding-right: 10px;
@@ -73,3 +75,12 @@ td {
     align: center;
 }
 
+.action {
+    align: center;
+    font-size: 24px;
+    color: black;
+    text-decoration: none;
+    padding: 4px;
+    border: 2px solid;
+    border-radius: 8px;
+}

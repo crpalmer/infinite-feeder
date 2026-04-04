@@ -924,6 +924,8 @@ private:
 void Channel::on_command(int _cmd, const void *data, int n_data) {
     cmd_t cmd = (cmd_t) _cmd;
     switch(cmd) {
+    case CMD_OKAY:
+	break;
     case CMD_PING:
 	send_command(CMD_PONG);
 	break;
@@ -949,6 +951,19 @@ void Channel::on_command(int _cmd, const void *data, int n_data) {
     case CMD_NEW_CONFIG_AVAILABLE:
 	printf("channel: new configuration is available, rebooting to get it.\n");
 	pi_reboot();
+    case CMD_STOP:
+	coordinator->stop();
+	send_command(CMD_OKAY);
+	break;
+    case CMD_RESUME:
+	coordinator->resume();
+	send_command(CMD_OKAY);
+	break;
+    case CMD_RETRACT:
+	if (n_data != sizeof(int)) printf("channel: Invalid RETRACT size %d\n", n_data);
+	else coordinator->retract(*(int *) data, config.motor_config.loading_speed);
+	send_command(CMD_OKAY);
+	break;
     }
 }
 
