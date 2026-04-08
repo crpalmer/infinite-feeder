@@ -850,7 +850,7 @@ public:
 
     void retract(int lane, int speed) {
 	if (lane == 0) lane_1->retract(speed);
-	else if (lane == 2) lane_2->retract(speed);
+	else if (lane == 1) lane_2->retract(speed);
 	else if (lane < 0 && active_lane) active_lane->retract(speed);
 	update(true);
     }
