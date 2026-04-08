@@ -30,7 +30,7 @@
 	        <span x-text="full && empty ? 'full & empty??' : full ? 'full' : empty ? 'empty' : 'partially fed'"></span>
 	      </td>
 	    </tr>
-	    <tr x-data="{ stopped: '@@lane1_state@@' === 'STOP' && '@@lane2_state@@' === 'STOP'}" >
+	    <tr x-data="{ stopped: '@@lane1_state@@' === 'stop' && '@@lane2_state@@' === 'stop'}" >
 	      <td class="status-label"/>
 	      <td class="status-cell">
 	        <div x-cloak x-show="! stopped"><a href="?action=stop" x-target="status" class="action">STOP</a></div>
@@ -41,7 +41,7 @@
         </table>
       </div>
       <div class="status-lanes">
-        <div x-data="{ is_active: @@active_lane@@ == 0 || '@@lane1_state@@' === 'RETRACT', is_ready : '@@lane1_state@@' == 'READY' }" :class="{ 'lane-active status-lane': is_active, 'lane-ready status-lane': is_ready, 'status-lane': ! is_active }">
+        <div x-data="{ is_active: @@active_lane@@ == 0 || '@@lane1_state@@' === 'retract', is_ready : '@@lane1_state@@' == 'ready' }" :class="{ 'lane-active status-lane': is_active, 'lane-ready status-lane': is_ready, 'status-lane': ! is_active }">
           <h2>Lane 1</h2>
           <table>
 	   <tbody>
@@ -53,7 +53,7 @@
 	      </td>
             </tr>
             <tr><td class="status-label">Filament fed (mm):</td><td class="status-cell">@@lane1_mm@@</td></tr>
-	    <tr x-data="{ stopped: '@@lane1_state@@' == 'STOP'}" >
+	    <tr x-data="{ stopped: '@@lane1_state@@' === 'stop'}" >
 	      <td class="status-cell" colspan="2">
 	        <div x-cloak x-show="stopped"><a href="?action=retract1" x-target="status" class="action">RETRACT</a></div>
 	      </td>
@@ -61,7 +61,7 @@
 	   </tbody>
           </table>
         </div>
-        <div x-data="{ is_active: @@active_lane@@ == 1 || '@@lane2_state@@' === 'RETRACT', is_ready : '@@lane2_state@@' == 'READY' }" :class="{ 'lane-active status-lane': is_active, 'lane-ready status-lane': is_ready, 'status-lane': ! is_active }">
+        <div x-data="{ is_active: @@active_lane@@ == 1 || '@@lane2_state@@' === 'retract', is_ready : '@@lane2_state@@' == 'ready' }" :class="{ 'lane-active status-lane': is_active, 'lane-ready status-lane': is_ready, 'status-lane': ! is_active }">
           <h2>Lane 2</h2>
           <table>
 	   <tbody>
@@ -73,7 +73,7 @@
 	      </td>
             </tr>
             <tr><td class="status-label">Filament fed (mm):</td><td class="status-cell">@@lane2_mm@@</td></tr>
-	    <tr x-data="{ stopped: '@@lane2_state@@' == 'STOP'}" >
+	    <tr x-data="{ stopped: '@@lane2_state@@' === 'stop'}" >
 	      <td class="status-cell" colspan="2">
 	        <div x-cloak x-show="stopped"><a href="?action=retract2" x-target="status" class="action">RETRACT</a></div>
 	      </td>
