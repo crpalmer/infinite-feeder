@@ -172,18 +172,18 @@ public:
 
     void stop() {
 	status.active_lane = -1;
-	strcpy(status.lanes[0].state, "STOP");
-	strcpy(status.lanes[1].state, "STOP");
+	strcpy(status.lanes[0].state, "stop");
+	strcpy(status.lanes[1].state, "stop");
     }
 
     void resume() {
 	status.active_lane = 0;
-	strcpy(status.lanes[0].state, "ACTIVE");
-	strcpy(status.lanes[1].state, "READY");
+	strcpy(status.lanes[0].state, "active");
+	strcpy(status.lanes[1].state, "ready");
     }
 
     void retract(int lane) {
-	strcpy(status.lanes[lane].state, "RETRACT");
+	strcpy(status.lanes[lane].state, "retract");
     }
 
 private:
