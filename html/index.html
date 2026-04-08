@@ -31,11 +31,17 @@
 	          <span x-text="full && empty ? 'full & empty??' : full ? 'full' : empty ? 'empty' : 'partially fed'"></span>
 	        </td>
 	      </tr>
+	      <tr>
+	        <td class="status-label">Filament output status:</td>
+	        <td class="status-cell" x-data="{ y_output : @@y_output@@ }">
+	          <span x-text="y_output ? 'filament present' : 'empty'"></span>
+	        </td>
+	      </tr>
 	    </tbody>
           </table>
 	  <div x-data="{ stopped: '@@lane1_state@@' === 'stop' && '@@lane2_state@@' === 'stop'}" class="action-container" >
-	    <div x-cloak x-show="! stopped"><a href="?action=stop" x-target="status" class="action">STOP</a></div>
-	    <div x-cloak x-show="stopped"><a href="?action=resume" x-target="status" class="action">RESUME</a></div>
+	    <div x-cloak x-show="! stopped" class="action"><a href="?action=stop" x-target="status">STOP</a></div>
+	    <div x-cloak x-show="stopped" class="action"><a href="?action=resume" x-target="status">RESUME</a></div>
           </div>
 	</div>
       </div>
@@ -56,7 +62,7 @@
 	     </tbody>
             </table>
 	    <div x-data="{ stopped: '@@lane1_state@@' === 'stop'}" class="action-container" >
-	      <div x-cloak x-show="stopped"><a href="?action=retract1" x-target="status" class="action">RETRACT</a></div>
+	      <div x-cloak x-show="stopped" class="action"><a href="?action=retract1" x-target="status">RETRACT</a></div>
 	    </div>
 	  </div>
         </div>
@@ -76,7 +82,7 @@
 	     </tbody>
             </table>
 	    <div x-data="{ stopped: '@@lane2_state@@' === 'stop'}" class="action-container" >
-	      <div x-cloak x-show="stopped"><a href="?action=retract2" x-target="status" class="action">RETRACT</a></div>
+	      <div x-cloak x-show="stopped" class="action"><a href="?action=retract2" x-target="status">RETRACT</a></div>
 	    </div>
           </div>
 	</div>
