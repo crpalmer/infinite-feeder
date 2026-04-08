@@ -13,6 +13,7 @@
 	<li class="tab tab-inactive"><a href="config.html">Configuration</a></li>
       </ul>
     </nav>
+    <div x-init="setInterval(() => $ajax('', { target: 'status' }).catch(), 1000)" @ajax:error="console.log('test')" @ajax:missing="console.log('missing')"/>
     <div id="status" class="status">
       <div class="status-global-container">
         <h2>Status</h2>
