@@ -743,8 +743,8 @@ public:
 	buffer_switches = new BufferSwitches(&config.buffer, notifier);
 	lane_1_switches = new LaneSwitches(&config.lanes[0], notifier);
 	lane_2_switches = new LaneSwitches(&config.lanes[1], notifier);
-	lane_1 = new Lane(lane_1_switches, buffer_switches, create_lane_stepper(&config.lanes[0], &config.motor_config, "stepper-1", tx), new LaneLight(lights, 1), "lane-1");
-	lane_2 = new Lane(lane_2_switches, buffer_switches, create_lane_stepper(&config.lanes[1], &config.motor_config, "stepper-2", tx), new LaneLight(lights, 0), "lane-2");
+	lane_1 = new Lane(lane_1_switches, buffer_switches, create_lane_stepper(&config.lanes[0], &config.motor_config, "stepper-1", tx), new LaneLight(lights, 0), "lane-1");
+	lane_2 = new Lane(lane_2_switches, buffer_switches, create_lane_stepper(&config.lanes[1], &config.motor_config, "stepper-2", tx), new LaneLight(lights, 1), "lane-2");
 
 	if (! lane_1_switches->is_loaded() && ! lane_2_switches->is_loaded() && buffer_switches->has_y_output()) {
 	    // Special case, neither lane is active but one of them was active
