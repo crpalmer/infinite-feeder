@@ -439,7 +439,9 @@ public:
 
 	    switch (state) {
 	    case INIT:
-		if (lane_switches->is_loaded()) state = ACTIVE;
+		target_mm = stepper->get_mm_moved();
+		if (is_loaded && has_y_output) state = ACTIVE;
+		else if (is_loaded) state = ACTIVATING;
 		else state = EMPTY;
 		printf("%s: initial state: %s\n", name, state_to_string(state));
 		break;
@@ -644,7 +646,7 @@ public:
     }
 
     void resume() {
-	if (state >= STOP) state = INIT;
+	state = INIT;
     }
 
 private:
@@ -771,9 +773,6 @@ public:
 	    ms_sleep(1000);
 	}
 
-	if (lane_1->is_active()) active_lane = lane_1;
-	if (lane_2->is_active()) active_lane = lane_2;
-
 	start();
     }
 
@@ -798,9 +797,11 @@ public:
 	if (active_lane && ! active_lane->is_active()) active_lane = NULL;
 
 	if (! active_lane) {
-	    if (lane_1->is_ready()) active_lane = lane_1;
+	    if (lane_1->is_active()) active_lane = lane_1;
+	    else if (lane_2->is_active()) active_lane = lane_2;
+	    else if (lane_1->is_ready()) active_lane = lane_1;
 	    else if (lane_2->is_ready()) active_lane = lane_2;
-	    if (active_lane) {
+	    if (active_lane && ! active_lane->is_active()) {
 		update_polling_us(active_lane->activate());
 		printf("activated: ");
 		active_lane->dump_state();
