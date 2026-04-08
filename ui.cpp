@@ -151,7 +151,7 @@ private:
     void send_synchronous_command(PiCond *cond, cmd_t cmd, void *data = NULL, int len = 0) {
 	lock->lock();
 	send_command(cmd, data, len);
-	while (! status_cond->wait_for(lock, 1000*1000)) {
+	while (! cond->wait_for(lock, 1000*1000)) {
 	    send_command(cmd, data, len);
 	}
 	lock->unlock();
