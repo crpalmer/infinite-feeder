@@ -133,14 +133,14 @@ public:
     }
 
     void empty() { lights->set(bulb, 0, 0, 0); }
-    void preloading() { lights->set(bulb, 255, 255, 255); }
-    void loaded() { lights->set(bulb, 0, 0, 255); }
+    void preloading() { lights->set(bulb, 255, 255, 0); }
+    void ready() { lights->set(bulb, 0, 0, 255); }
     void error() { lights->set(bulb, 255, 0, 0); }
-    void loading() { lights->set(bulb, 0, 128, 0); }
-    void emptying() { lights->set(bulb, 128, 0, 128); }
-    void feeding() { lights->set(bulb, 0, 255, 0); }
+    void loading() { lights->set(bulb, 160, 255, 160); }
+    void emptying() { lights->set(bulb, 255, 0, 200); }
+    void active() { lights->set(bulb, 0, 255, 0); }
     void waiting() { lights->set(bulb, 0, 128, 0); }
-    void retract() { lights->set(bulb, 100, 175, 100); }
+    void retract() { lights->set(bulb, 255, 180, 0); }
     void stop() { error(); }
 
 private:
@@ -471,6 +471,7 @@ public:
 		if (! is_present) state = EMPTY;
 		break;
 	    case READY:
+		light->ready();
 		break;
 	    case ACTIVATING:
 		if (is_loaded) {
@@ -500,6 +501,7 @@ public:
 		}
 		break;
 	    case LOADING_RETRACT:
+		light->error();
 		if (! is_loaded) {
 		    target_mm = stepper->get_mm_moved() + config.error.mm_to_load;
 		    state = LOADING;
@@ -512,12 +514,14 @@ public:
 		}
 		break;
 	    case ACTIVE:
+		light->active();
 		if (buffer_is_full && buffer_is_empty) state = ERROR;
 		else if (! is_loaded) state = EMPTYING;
 		else if (buffer_is_full) state = WAITING;
 		else feed = config.motor_config.refill_speed;
 		break;
 	    case WAITING: {
+		light->waiting();
 		us_time_t now = us_now();
 		if (! is_loaded) {
 		    state = EMPTYING;
@@ -535,6 +539,7 @@ public:
 		break;
 	    }
 	    case ACTIVE_RETRACT:
+		light->error();
 		if (stepper->get_mm_moved() <= target_mm) {
 		    state = ACTIVE;
 		    wait_until = us_now() + config.error.y_output_timeout_us;
@@ -555,7 +560,7 @@ public:
 		light->stop();
 		break;
 	    case FEED:
-		light->feeding();
+		light->active();
 		if (! is_loaded) state = STOP;
 		else if (buffer_is_full) state = FEED_WAITING;
 		else feed = manual_feed;
