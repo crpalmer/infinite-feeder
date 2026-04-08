@@ -40,19 +40,37 @@ typedef struct {
     error_config_t  error;
 } config_t;
 
+typedef enum {
+    SKR_THB = 26,
+    SKR_TH0 = 27,
+    SKR_X_STOP = 4,
+    SKR_Y_STOP = 3,
+    SKR_Z_STOP = 25,
+    SKR_RGB = 24,
+    SKR_E0_STOP = 16,
+    SKR_SERVOS = 29,
+    SKR_PROBE = 22,
+    SKR_HB = 21,
+    SKR_HE = 23,
+    SKR_LASER = 20,
+    SKR_FAN1 = 17,
+    SKR_FAN2 = 18,
+    SKR_FAN3 = 20,
+} skr_pin_t;
+
 static const config_t factory_config = {
     {
         {
-            .present = 22,
-            .loaded = 27,
+            .present = SKR_PROBE,
+            .loaded = SKR_Y_STOP,
             .enable = 15,
             .dir = 13,
             .step = 14,
             .uart_address = 3,
             .invert = false },
         {
-            .present = 3,
-            .loaded =  25,
+            .present = SKR_SERVOS,
+            .loaded =  SKR_Z_STOP,
             .enable = 12,
             .dir = 10,
             .step = 11,
@@ -70,12 +88,12 @@ static const config_t factory_config = {
         .refill_speed = 10
     },
     {
-        .input = 16,
-        .full = 26,
-        .empty = 4,
+        .input = SKR_THB,
+        .full = SKR_TH0,
+        .empty = SKR_X_STOP,
     },
     {
-	.rgb = 24,
+	.rgb = SKR_RGB,
         .mm_to_load = 200,
         .mm_to_retry = 50,
         .mm_to_load2 = 100,
