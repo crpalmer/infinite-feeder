@@ -303,6 +303,13 @@ public:
 	} else if (is_command(cmd, "ssid")) {
 	    process_setting(arg, "ssid", httpd_config.ap.ssid, sizeof(httpd_config.ap.ssid));
 	    if (httpd_config.ap.ssid[0]) wifi_set_ap(httpd_config.ap.ssid, httpd_config.ap.password);
+	} else if (is_command(cmd, "factory-reset")) {
+	    config = factory_config;
+	    if (storage->save_config(&config)) {
+		printf("factory reset successful.\n");
+	    } else {
+		printf("factory reset failed to save configuration\n");
+	    }
 	} else {
 	    ThreadsConsole::process_cmd(cmd);
 	}
@@ -314,6 +321,7 @@ public:
 	printf("hostname [hostname]\n");
 	printf("password [password]\n");
 	printf("ssid [ssid]\n");
+	printf("factory-reset: reset the firmware configuration (not wifi config)\n");
 	printf("\nsave : save configuration and reboot\n");
     }
 
