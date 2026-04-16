@@ -12,11 +12,14 @@ UARTChannel::UARTChannel(int tx_pin, int rx_pin, const char *name) : PiThread(na
 
 void UARTChannel::main(void) {
     while (1) {
-	uint8_t last_two[2] = { 1, 1 };
-	do {
-	    last_two[0] = last_two[1];
-	    last_two[1] = rx->getc();
-	} while (last_two[0] != 0 || last_two[1] != 0xff);
+	uint8_t last_three[3] = { 1, 1, 1 };
+	for (;;) {
+	    last_three[0] = last_three[1];
+	    last_three[1] = last_three[2];
+	    last_three[2] = rx->getc();
+	    if (last_three[0] == 0xff && last_three[1] == 0 && last_three[2] == 0x7f) break;
+	    printf("uart-channel: rejected %x %x %x\n", last_three[0], last_three[1], last_three[2]);
+	}
 
 	int cmd, n_data;
 	void *data = NULL;
@@ -35,8 +38,9 @@ void UARTChannel::main(void) {
 }
 
 void UARTChannel::send_command(int cmd, const void *data, int n_data) {
-    tx->putc(0);
     tx->putc(0xff);
+    tx->putc(0);
+    tx->putc(0x7f);
     write_int(cmd);
     write_int(n_data);
     tx->write(data, n_data);
