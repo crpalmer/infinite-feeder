@@ -123,6 +123,31 @@ public:
 	}
     }
 
+    void data_range(int _cmd, int *low, int *high) override {
+	cmd_t cmd = (cmd_t) _cmd;
+
+	*low = *high = 0;
+
+	switch(cmd) {
+	case CMD_OKAY:
+	case CMD_PING:
+	case CMD_PONG:
+	case CMD_GET_CONFIG:
+	    break;
+	case CMD_STOP:
+	case CMD_RESUME:
+	case CMD_RETRACT:
+	case CMD_CONFIG_BLOB:
+	case CMD_GET_STATUS:
+	case CMD_NEW_CONFIG_AVAILABLE:
+	    printf("channel: received unexpected command %d\n", cmd);
+	    break;
+	case CMD_STATUS:
+	    *low = *high = sizeof(status);
+	    break;
+	}
+    }
+
     void get_status() {
 	send_synchronous_command(status_cond, CMD_GET_STATUS);
     }

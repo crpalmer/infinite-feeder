@@ -72,6 +72,33 @@ printf("got my config!\n");
 	lock->unlock();
     }
 
+    void data_range(int _cmd, int *low, int *high) override {
+	cmd_t cmd = (cmd_t) _cmd;
+
+	*low = *high = 0;
+
+	switch(cmd) {
+	case CMD_OKAY:
+	case CMD_PING:
+	case CMD_PONG:
+	case CMD_GET_STATUS:
+	case CMD_NEW_CONFIG_AVAILABLE:
+	case CMD_STOP:
+	case CMD_RESUME:
+	    break;
+	case CMD_STATUS:
+	case CMD_GET_CONFIG:
+	    printf("uart-channel: unexpected command %d\n", cmd);
+	    break;
+	case CMD_CONFIG_BLOB:
+	    *low = *high = sizeof(config);
+	    break;
+	case CMD_RETRACT:
+	    *low = *high = sizeof(int);
+	    break;
+	}
+    }
+
 private:
     void send_command_locked(int cmd, const void *data = NULL, int n_data = 0) {
 	UARTChannel::send_command(cmd, data, n_data);

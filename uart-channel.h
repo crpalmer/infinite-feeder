@@ -14,6 +14,11 @@ public:
     virtual void send_command(int cmd, const void *payload = NULL, int n_payload = 0);
     virtual void on_command(int cmd, const void *payload, int n_payload) = 0;
 
+    virtual void data_range(int cmd, int *low, int *high) {
+	*low = 0;
+	*high = 1<<16;
+    }
+
 private:
     void write_int(int value);
     bool read_int(int *value);

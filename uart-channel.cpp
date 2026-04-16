@@ -41,6 +41,14 @@ void UARTChannel::main(void) {
 	if (! read_int(&cmd) || ! read_int(&n_data) || n_data < 0) continue;
 
 	if (n_data > 0) {
+	    int low, high;
+
+	    data_range(cmd, &low, &high);
+	    if (n_data < low || n_data > high) {
+		printf("uart-channel: invalid data range: cmd=%d, valid=%d..%d, received=%d\n", cmd, low, high, n_data);
+		continue;
+	    }
+
 	    uint32_t checksum;
 	    data = fatal_malloc(n_data);
 	    rx->read(data, n_data);
