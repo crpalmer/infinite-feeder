@@ -86,29 +86,44 @@ private:
 class Channel : public UARTChannel {
 public:
     Channel(int tx_pin, int rx_pin) : UARTChannel(tx_pin, rx_pin) {
-	lock = new PiMutex();
 	status_cond = new PiCond();
 	okay_cond = new PiCond();
+	start();
     }
 
-    void on_command(int _cmd, const void *data, int n_data) override {
+    void get_status() {
+	send_command(CMD_GET_STATUS, status_cond);
+    }
+
+    void send_config() {
+	send_command(CMD_NEW_CONFIG_AVAILABLE);
+    }
+
+    void stop() {
+	send_command(CMD_STOP, okay_cond);
+    }
+
+    void resume() {
+	send_command(CMD_RESUME, okay_cond);
+    }
+
+    void retract(int lane) {
+	send_command(CMD_RETRACT, &lane, sizeof(lane), okay_cond);
+    }
+
+    PiCond *on_command(int _cmd, const void *data, int n_data) override {
 	cmd_t cmd = (cmd_t) _cmd;
 	switch(cmd) {
 	case CMD_OKAY:
-	    okay_cond->broadcast();
-	    break;
+	    return okay_cond;
 	case CMD_PING: send_command(CMD_PONG); break;
 	case CMD_PONG: printf("got my pong\n"); break;
 	case CMD_STATUS:
-	    if (n_data != sizeof(status)) {
-		printf("channel: invalid status received (%d bytes when expecting %d bytes)\n", n_data, sizeof(status));
-	    } else {
-		status_lock->lock();
-		memcpy(&status, data, n_data);
-		status_lock->unlock();
-		status_cond->broadcast();
-	    }
-	    break;
+	    assert(n_data == sizeof(status));
+	    status_lock->lock();
+	    memcpy(&status, data, n_data);
+	    status_lock->unlock();
+	    return status_cond;
 	case CMD_GET_CONFIG:
 	    send_command(CMD_CONFIG_BLOB, &config, sizeof(config));
 	    break;
@@ -121,6 +136,7 @@ public:
 	    printf("channel: received unexpected command %d\n", cmd);
 	    break;
 	}
+	return NULL;
     }
 
     void data_range(int _cmd, int *low, int *high) override {
@@ -148,39 +164,9 @@ public:
 	}
     }
 
-    void get_status() {
-	send_synchronous_command(status_cond, CMD_GET_STATUS);
-    }
-
-    void send_config() {
-	send_command(CMD_NEW_CONFIG_AVAILABLE);
-    }
-
-    void stop() {
-	send_synchronous_command(okay_cond, CMD_STOP);
-    }
-
-    void resume() {
-	send_synchronous_command(okay_cond, CMD_RESUME);
-    }
-
-    void retract(int lane) {
-	send_synchronous_command(okay_cond, CMD_RETRACT, &lane, sizeof(lane));
-    }
-
 private:
-    PiMutex *lock;
     PiCond *okay_cond;
     PiCond *status_cond;
-
-    void send_synchronous_command(PiCond *cond, cmd_t cmd, void *data = NULL, int len = 0) {
-	lock->lock();
-	send_command(cmd, data, len);
-	while (! cond->wait_for(lock, 1000*1000)) {
-	    send_command(cmd, data, len);
-	}
-	lock->unlock();
-    }
 };
 #else
 class Channel {

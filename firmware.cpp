@@ -30,46 +30,23 @@ static us_time_t boot_at;
 class Channel : public UARTChannel {
 public:
     Channel(int tx_pin, int rx_pin) : UARTChannel(tx_pin, rx_pin) {
-	lock = new PiMutex();
-	pong = new PiCond();
+	pong_cond = new PiCond();
 	config_cond = new PiCond();
+	start();
     }
 
-    void send_command(int cmd, const void *data = NULL, int n_data = 0) override {
-	lock->lock();
-	send_command_locked(cmd, data, n_data);
-	lock->unlock();
-    }
+    PiCond *on_command(int _cmd, const void *data, int n_data) override;
 
-    void on_command(int _cmd, const void *data, int n_data) override;
-
-    bool ping(int wait_ms = -1) {
-	bool ret = false;
-
-	lock->lock();
-	send_command_locked(CMD_PING);
-	if (wait_ms >= 0) {
-	    ret = pong->wait_for(lock, wait_ms * 1000);
-	}
-	lock->unlock();
-
-	return ret;
-    }
-
-    void send_status(status_t *status) {
-	send_command(CMD_STATUS, status, sizeof(*status));
+    bool ping(int max_retries = -1, int wait_ms = 1000) {
+	return send_command(CMD_PING, pong_cond, wait_ms, max_retries);
     }
 
     void get_config() {
-	lock->lock();
-printf("asking for config\n");
-	send_command_locked(CMD_GET_CONFIG);
-	while (! config_cond->wait_for(lock, 1000*1000)) {
-printf("retry\n");
-	    send_command_locked(CMD_GET_CONFIG);
-	}
-printf("got my config!\n");
-	lock->unlock();
+	send_command(CMD_GET_CONFIG, config_cond);
+    }
+
+    void send_status(status_t *status) {
+       send_command(CMD_STATUS, status, sizeof(*status));
     }
 
     void data_range(int _cmd, int *low, int *high) override {
@@ -100,16 +77,9 @@ printf("got my config!\n");
     }
 
 private:
-    void send_command_locked(int cmd, const void *data = NULL, int n_data = 0) {
-	UARTChannel::send_command(cmd, data, n_data);
-    }
-
-private:
-    PiMutex *lock;
-    PiCond *pong;
+    PiCond *pong_cond;
     PiCond *config_cond;
     bool made_contact = false;
-    config_t last_config;
 };
 
 class ChannelProber : public PiThread {
@@ -119,12 +89,8 @@ public:
     }
 
     void main(void) override {
-	uint64_t n_tries = 0;
-
 	printf("channel-prober: running, trying to contact the remote pico\n");
-	while (! channel->ping(1000)) {
-	    if ((n_tries++ % 50) == 0) printf("channel-prober: still trying.\n");
-	}
+	channel->ping();
 	printf("channel: contact initiated, exiting\n");
     }
 
@@ -954,7 +920,7 @@ private:
     bool enabled = false;
 };
 
-void Channel::on_command(int _cmd, const void *data, int n_data) {
+PiCond *Channel::on_command(int _cmd, const void *data, int n_data) {
     cmd_t cmd = (cmd_t) _cmd;
     switch(cmd) {
     case CMD_OKAY:
@@ -963,8 +929,7 @@ void Channel::on_command(int _cmd, const void *data, int n_data) {
 	send_command(CMD_PONG);
 	break;
     case CMD_PONG:
-	pong->broadcast();
-	break;
+	return pong_cond;
     case CMD_STATUS:
     case CMD_GET_CONFIG:
 	assert(0);
@@ -973,14 +938,10 @@ void Channel::on_command(int _cmd, const void *data, int n_data) {
 	coordinator->send_status();
 	break;
     case CMD_CONFIG_BLOB:
-	if (n_data != sizeof(config)) {
-	    printf("channel: received %d bytes of configuration and was expecting %d\n", n_data, (int) sizeof(config));
-	} else {
-	    printf("channel: received config blob\n");
-	    memcpy(&config, data, n_data);
-	    config_cond->signal();
-	}
-	break;
+	// Note: this only happens by our blocking request, we don't need to lock it
+	printf("channel: received config blob\n");
+	memcpy(&config, data, n_data);
+	return config_cond;
     case CMD_NEW_CONFIG_AVAILABLE:
 	printf("channel: new configuration is available, rebooting to get it.\n");
 	pi_reboot();
@@ -998,6 +959,7 @@ void Channel::on_command(int _cmd, const void *data, int n_data) {
 	send_command(CMD_OKAY);
 	break;
     }
+    return NULL;
 }
 
 static void threads_main(int argc, char **argv) {
@@ -1030,11 +992,14 @@ static void threads_main(int argc, char **argv) {
 	if (pi_readline(line, sizeof(line)) != NULL) {
 	    if (strcmp(line, "ping") == 0) {
 		if (! channel) printf("cannot ping, there is no pico connected.\n");
-		else if (channel->ping(1000)) printf("pong received\n");
+		else if (channel->ping(0)) printf("pong received\n");
 		else printf("*** PONG NOT RECEIVED\n");
 	    } else if (strcmp(line, "bootsel") == 0) {
 		printf("Rebooting to bootloader.\n"); fflush(stdout);
 		pi_reboot_bootloader();
+	    } else if (strcmp(line, "reboot") == 0) {
+		printf("Rebooting.\n"); fflush(stdout);
+		pi_reboot();
 	    } else if (strcmp(line, "state") == 0) {
 		coordinator->dump_state();
 	    } else if (strcmp(line, "threads") == 0 || strcmp(line, "t") == 0) {
@@ -1102,6 +1067,7 @@ static void threads_main(int argc, char **argv) {
 		printf("\nPico Control:");
 		printf("\n-------------\n");
 		printf("bootsel: reboot to bootloader mode\n");
+		printf("reboot\n");
 		printf("state: dump state\n");
 		printf("threads: dump thread state\n");
 	    } else if (line[0]) {

@@ -21,7 +21,7 @@ uint32_t adler32(const void *data_vp, size_t len) {
 UARTChannel::UARTChannel(int tx_pin, int rx_pin, const char *name) : PiThread(name) {
     tx = pico_new_uart_tx(tx_pin);
     rx = pico_new_uart_rx(rx_pin);
-    start();
+    lock = new PiMutex();
 }
 
 void UARTChannel::main(void) {
@@ -37,12 +37,17 @@ void UARTChannel::main(void) {
 	    last_three[2] = rx->getc();
 	}
 
+printf("got preamble\n");
 	int cmd, n_data;
+
+	read_int(&cmd);
+printf("cmd=%d\n", cmd);
+	read_int(&n_data);
+printf("n_data=%d\n", n_data);
+
 	void *data = NULL;
 
-	if (! read_int(&cmd) || ! read_int(&n_data) || n_data < 0) continue;
-
-	if (n_data > 0) {
+	if (n_data != 0) {
 	    int low, high;
 
 	    data_range(cmd, &low, &high);
@@ -63,38 +68,63 @@ void UARTChannel::main(void) {
 	    }
 	}
 
-	on_command(cmd, data, n_data);
+printf("on_command %d %p %d\n", cmd, data, n_data);
+	PiCond *notify_cond = on_command(cmd, data, n_data);
 
+printf("free data %p\n", data);
 	if (data) fatal_free(data);
+
+printf("uart_channel: cmd=%d notifies %p\n", cmd, notify_cond);
+	if (notify_cond) {
+printf("lock\n");
+	    lock->lock();
+printf("broadcast\n");
+	    notify_cond->broadcast();
+	    lock->unlock();
+printf("unlock\n");
+	}
+printf("uart_channel: done %d\n", cmd);
     }
 }
 
-void UARTChannel::send_command(int cmd, const void *data, int n_data) {
-    tx->putc(0xff);
-    tx->putc(0);
-    tx->putc(0x7f);
-    write_int(cmd);
-    write_int(n_data);
-    if (n_data) {
-	uint32_t checksum = adler32(data, n_data);
-	tx->write(data, n_data);
-	tx->write(&checksum, sizeof(checksum));
-    }
+bool UARTChannel::send_command(int cmd, const void *data, int n_data, PiCond *wait_cond, int timeout_ms, int max_retries) {
+    int retries = 0;
+
+printf("lock\n");
+    lock->lock();
+
+    do {
+	if (max_retries >= 0 && retries++ > max_retries) {
+printf("uart_channel: failed to get a reply in %d retries\n", max_retries);
+	    lock->unlock();
+printf("unlock\n");
+	    return false;
+	}
+printf("uart_channel: send cmd=%d, n=%d, cond=%p, ms=%d, retries=%d/%d\n", cmd, n_data, wait_cond, timeout_ms, retries, max_retries);
+	tx->putc(0xff);
+	tx->putc(0);
+	tx->putc(0x7f);
+	write_int(cmd);
+	write_int(n_data);
+	if (n_data) {
+	    uint32_t checksum = adler32(data, n_data);
+	    tx->write(data, n_data);
+	    tx->write(&checksum, sizeof(checksum));
+	}
+printf("sent wait_for %p %d\n", wait_cond, timeout_ms);
+    } while (wait_cond && ! wait_cond->wait_for(lock, timeout_ms * 1000));
+
+    lock->unlock();
+printf("unlock\n");
+    return true;
 }
 
 void UARTChannel::write_int(int value) {
-    char str[20];
-    sprintf(str, "%d\n", value);
-    tx->write(str);
+    tx->write(&value, sizeof(value));
 }
 
-bool UARTChannel::read_int(int *value) {
-    *value = 0;
-    while (1) {
-	char c = rx->getc();
-	if (isdigit(c)) (*value) = (*value)*10 + (c - '0');
-	else if (c == '\n') return true;
-	else return false;
-    }
+void UARTChannel::read_int(int *value) {
+    rx->read(value, sizeof(*value));
 }
+
 #endif
