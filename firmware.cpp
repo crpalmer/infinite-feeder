@@ -2,7 +2,6 @@
 #include <cstring>
 #include <math.h>
 #include <limits.h>
-#include "commands.h"
 #include "config.h"
 #include "fram-mb85c.h"
 #include "gp-input.h"
@@ -10,13 +9,11 @@
 #include "i2c.h"
 #include "neopixel-pico.h"
 #include "pi-threads.h"
-#include "status.h"
 #include "stepper.h"
 #include "string-utils.h"
 #include "thread-interrupt-notifier.h"
 #include "time-utils.h"
 #include "tmc2209.h"
-#include "uart-channel.h"
 
 static uint32_t CONFIG_MAGIC = 0x98765432;
 static int CONFIG_OFFSET = 0;
@@ -26,77 +23,6 @@ static int CONFIG_DATA_OFFSET = CONFIG_VERSION_OFFSET + sizeof(CONFIG_VERSION);
 static config_t config = factory_config;
 static class Coordinator *coordinator;
 static us_time_t boot_at;
-
-class Channel : public UARTChannel {
-public:
-    Channel(int tx_pin, int rx_pin) : UARTChannel(tx_pin, rx_pin) {
-	pong_cond = new PiCond();
-	config_cond = new PiCond();
-	start();
-    }
-
-    PiCond *on_command(int _cmd, const void *data, int n_data) override;
-
-    bool ping(int max_retries = -1, int wait_ms = 1000) {
-	return send_command(CMD_PING, pong_cond, wait_ms, max_retries);
-    }
-
-    void get_config() {
-	send_command(CMD_GET_CONFIG, config_cond);
-    }
-
-    void send_status(status_t *status) {
-       send_command(CMD_STATUS, status, sizeof(*status));
-    }
-
-    void data_range(int _cmd, int *low, int *high) override {
-	cmd_t cmd = (cmd_t) _cmd;
-
-	*low = *high = 0;
-
-	switch(cmd) {
-	case CMD_OKAY:
-	case CMD_PING:
-	case CMD_PONG:
-	case CMD_GET_STATUS:
-	case CMD_NEW_CONFIG_AVAILABLE:
-	case CMD_STOP:
-	case CMD_RESUME:
-	    break;
-	case CMD_STATUS:
-	case CMD_GET_CONFIG:
-	    printf("uart-channel: unexpected command %d\n", cmd);
-	    break;
-	case CMD_CONFIG_BLOB:
-	    *low = *high = sizeof(config);
-	    break;
-	case CMD_RETRACT:
-	    *low = *high = sizeof(int);
-	    break;
-	}
-    }
-
-private:
-    PiCond *pong_cond;
-    PiCond *config_cond;
-    bool made_contact = false;
-};
-
-class ChannelProber : public PiThread {
-public:
-    ChannelProber(Channel *channel) : PiThread("channel-prober"), channel(channel) {
-	start();
-    }
-
-    void main(void) override {
-	printf("channel-prober: running, trying to contact the remote pico\n");
-	channel->ping();
-	printf("channel: contact initiated, exiting\n");
-    }
-
-private:
-    Channel *channel;
-};
 
 class Lights {
 public:
@@ -143,40 +69,12 @@ private:
 
 class PersistentStorage {
 public:
-    ~PersistentStorage() { }
-    virtual bool load(config_t *c) = 0;
-    virtual bool save(const config_t *c) = 0;
-    virtual bool is_readonly() { return true; }
-};
-
-class PicoPersistentStorage : public PersistentStorage {
-public:
-    PicoPersistentStorage(Channel *channel) : channel(channel) {
-    }
-
-    bool load(config_t *c) override {
-	channel->get_config();
-	return true;
-    }
-
-    bool save(const config_t *c) override {
-	return false;
-    }
-
-private:
-    Channel *channel;
-};
-
-class FRAMPersistentStorage : public PersistentStorage {
-public:
-    FRAMPersistentStorage() {
+    PersistentStorage() {
 	i2c_init_bus(I2C_BUS, I2C_SDA, I2C_SCL);
 	fram = new FRAM_MB85C(I2C_BUS);
     }
 
-    bool is_readonly() override { return false; }
-
-    bool load(config_t *c) override {
+    bool load(config_t *c) {
 	uint32_t magic;
 	if (! fram->read(CONFIG_OFFSET, &magic, sizeof(magic))) return false;
 	if (magic != CONFIG_MAGIC) return false;
@@ -199,7 +97,7 @@ public:
 	return true;
     }
 
-    bool save(const config_t *c) override {
+    bool save(const config_t *c) {
 	uint32_t magic = CONFIG_MAGIC;
 	if (! fram->write(CONFIG_OFFSET, &magic, sizeof(magic))) return false;
 	uint32_t version = CONFIG_VERSION;
@@ -223,13 +121,13 @@ private:
     static const int CONFIG_OFFSET = 0;
 };
 
-static PersistentStorage *storage;
+static PersistentStorage *storage = NULL;
 
 static void read_int(bool validate_only, const char *prompt, int *value, int min = -INT_MAX, int max = INT_MAX) {
     char line[128];
     int new_value;
 
-    if (validate_only || storage->is_readonly()) {
+    if (validate_only || ! storage) {
 	new_value = *value;
     } else {
 	printf("%s [%3d]: ", prompt, *value);
@@ -309,7 +207,7 @@ static void set_all_config(config_t *c, bool validate_only = false) {
     set_buffer_config(&c->buffer, validate_only);
     printf("\n");
     set_error_config(&c->error, validate_only);
-    if (! validate_only) storage->save(c);
+    if (! validate_only && storage) storage->save(c);
 }
 
 // -------------------------- END CONFIG --------------------------
@@ -612,13 +510,6 @@ public:
 	printf(" target_mm %.2f", target_mm);
     }
 
-    void get_status(lane_status_t *status) {
-	strcpy(status->state, state_to_string(state));
-	status->present = lane_switches->is_present();
-	status->loaded = lane_switches->is_loaded();
-	status->mm = stepper->get_mm_moved();
-    }
-
     void error() {
 	stepper->set_speed(0);
 	state = STOP;
@@ -732,7 +623,7 @@ private:
 
 class Coordinator : public PiThread {
 public:
-    Coordinator(Lights *lights, Channel *channel) : PiThread("coordinator"), lights(lights), channel(channel) {
+    Coordinator(Lights *lights) : PiThread("coordinator"), lights(lights) {
 	lock = new PiMutex();
 	cond = new PiCond();
 
@@ -820,20 +711,6 @@ public:
 	printf("\n");
     }
 
-    void send_status() {
-	status_t status;
-	lane_1->get_status(&status.lanes[0]);
-	lane_2->get_status(&status.lanes[1]);
-	status.uptime = us_elapsed_ms_now(&boot_at) / 1000;
-	if (active_lane == lane_1) status.active_lane = 0;
-	else if (active_lane == lane_2) status.active_lane = 1;
-	else status.active_lane = -1;
-	status.y_output = buffer_switches->has_y_output();
-	status.buffer_full = buffer_switches->buffer_is_full();
-	status.buffer_empty = buffer_switches->buffer_is_empty();
-	channel->send_status(&status);
-    }
-
     void stop() {
 	lane_1->stop();
 	lane_2->stop();
@@ -868,7 +745,6 @@ private:
 
 private:
     Lights *lights;
-    Channel *channel;
 
     PiMutex *lock;
     PiCond *cond;
@@ -920,69 +796,23 @@ private:
     bool enabled = false;
 };
 
-PiCond *Channel::on_command(int _cmd, const void *data, int n_data) {
-    cmd_t cmd = (cmd_t) _cmd;
-    switch(cmd) {
-    case CMD_OKAY:
-	break;
-    case CMD_PING:
-	send_command(CMD_PONG);
-	break;
-    case CMD_PONG:
-	return pong_cond;
-    case CMD_STATUS:
-    case CMD_GET_CONFIG:
-	assert(0);
-	break;
-    case CMD_GET_STATUS:
-	coordinator->send_status();
-	break;
-    case CMD_CONFIG_BLOB:
-	// Note: this only happens by our blocking request, we don't need to lock it
-	printf("channel: received config blob\n");
-	memcpy(&config, data, n_data);
-	return config_cond;
-    case CMD_NEW_CONFIG_AVAILABLE:
-	printf("channel: new configuration is available, rebooting to get it.\n");
-	pi_reboot();
-    case CMD_STOP:
-	coordinator->stop();
-	send_command(CMD_OKAY);
-	break;
-    case CMD_RESUME:
-	coordinator->resume();
-	send_command(CMD_OKAY);
-	break;
-    case CMD_RETRACT:
-	if (n_data != sizeof(int)) printf("channel: Invalid RETRACT size %d\n", n_data);
-	else coordinator->retract(*(int *) data, config.motor_config.loading_speed);
-	send_command(CMD_OKAY);
-	break;
-    }
-    return NULL;
-}
-
 static void threads_main(int argc, char **argv) {
     ms_sleep(2000);
     printf("Starting\n");
-    Channel *channel = NULL;
 
     boot_at = us_now();
 
     Lights *lights = new Lights();
 
-    if (FRAMPersistentStorage::exists()) {
+    if (PersistentStorage::exists()) {
 	printf("FRAM exists, using it for persistent storage\n");
-	storage = new FRAMPersistentStorage();
+	storage = new PersistentStorage();
+	if (! storage->load(&config)) printf("FAILED to load existing configuration\n");
     } else {
-	printf("FRAM doesn't exist, trying to talk to a pico for persistent storage.\n");
-	channel = new Channel(0, 1);
-	new ChannelProber(channel);
-	storage = new PicoPersistentStorage(channel);
+	printf("WARNING: no FRAM detected, storage is disabled and using factory config\n");
     }
 
-    if (! storage->load(&config)) printf("FAILED to load existing configuration\n");
-    coordinator = new Coordinator(lights, channel);
+    coordinator = new Coordinator(lights);
     StateDumper *state_dumper = new StateDumper(coordinator);
 
     printf("Created coordinator, entering interactive loop.\n");
@@ -990,11 +820,7 @@ static void threads_main(int argc, char **argv) {
 	static char line[1024];
 
 	if (pi_readline(line, sizeof(line)) != NULL) {
-	    if (strcmp(line, "ping") == 0) {
-		if (! channel) printf("cannot ping, there is no pico connected.\n");
-		else if (channel->ping(0)) printf("pong received\n");
-		else printf("*** PONG NOT RECEIVED\n");
-	    } else if (strcmp(line, "bootsel") == 0) {
+	    if (strcmp(line, "bootsel") == 0) {
 		printf("Rebooting to bootloader.\n"); fflush(stdout);
 		pi_reboot_bootloader();
 	    } else if (strcmp(line, "reboot") == 0) {
@@ -1024,7 +850,7 @@ static void threads_main(int argc, char **argv) {
 		int speed = config.motor_config.loading_speed;
 		sscanf(&line[7], "%d %d", &lane, &speed);
 		coordinator->retract(lane, speed);
-	    } else if (strcmp(line, "factory-reset") == 0) {
+	    } else if (strcmp(line, "factory-reset") == 0 && storage) {
 		storage->save(&factory_config);
 	    } else if (strcmp(line, "show") == 0 || strcmp(line, "config") == 0) {
 		set_all_config(&config, true);
@@ -1057,7 +883,7 @@ static void threads_main(int argc, char **argv) {
 		printf("set (all | lane_1 | lane_2 | motor | buffer): modify configuration\n");
 		printf("show [all | lane_1 | lane_2 | motor | buffer]: show configuration\n");
 		printf("config : show full configuration\n");
-		printf("factory-reset\n");
+		if (storage) printf("factory-reset\n");
 		printf("\nInfinite Feeder Control:");
 		printf("\n------------------------\n");
 		printf("stop: switch to manual processing\n");
