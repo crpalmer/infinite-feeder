@@ -20,6 +20,8 @@ static int CONFIG_OFFSET = 0;
 static int CONFIG_VERSION_OFFSET = CONFIG_OFFSET + sizeof(CONFIG_MAGIC);
 static int CONFIG_DATA_OFFSET = CONFIG_VERSION_OFFSET + sizeof(CONFIG_VERSION);
 
+static us_time_t RETRACT_ON_AFTER_US = 5*1000*1000;
+
 static config_t config = factory_config;
 static class Coordinator *coordinator;
 static us_time_t boot_at;
@@ -637,6 +639,7 @@ public:
 	manual_switch = new Switch(config.retract.manual, notifier);
 	retract_switches[0] = new Switch(config.retract.lane[0], notifier, true);
 	retract_switches[1] = new Switch(config.retract.lane[1], notifier, true);
+	retract_start = us_now();
 
 	if (manual_switch->get()) {
 	    stop();
@@ -689,8 +692,12 @@ public:
 
 	for (int i = 0; i < 2; i++) {
 	    if (retract_switches[i]->update() && manual_switch->get()) {
-		if (retract_switches[i]->get()) lane[i]->retract();
-		else lane[i]->stop();
+		if (retract_switches[i]->get()) {
+		    lane[i]->retract();
+		    retract_start = us_now();
+		} else if (us_now() - retract_start <= RETRACT_ON_AFTER_US) {
+		    lane[i]->stop();
+		}
 		update(true);
 	    }
 	}
@@ -769,6 +776,7 @@ private:
 
     Switch *manual_switch;
     Switch *retract_switches[2];
+    us_time_t retract_start;
 
     Lane *active_lane = NULL;
     us_time_t polling_us = 0;
