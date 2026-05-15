@@ -34,10 +34,17 @@ typedef struct {
 } error_config_t;
 
 typedef struct {
+    int		    lane[2];
+    int		    manual;
+    int		    speed;
+} retract_controller_config_t;
+
+typedef struct {
     lane_config_t   lanes[2];
     motor_config_t  motor_config;
     buffer_config_t buffer;
     error_config_t  error;
+    retract_controller_config_t retract;
 } config_t;
 
 typedef enum {
@@ -100,8 +107,13 @@ static const config_t factory_config = {
         .y_output_timeout_us = 10*1000*1000,
         .y_output_retract_mm = 10,
     },
+    {
+	.lane = { 0, 1 },
+	.manual = SKR_E0_STOP,
+	.speed = -20,
+    },
 };
 
-static const uint32_t CONFIG_VERSION = 2;
+static const uint32_t CONFIG_VERSION = 3;
 
 #endif

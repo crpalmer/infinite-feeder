@@ -81,18 +81,21 @@ public:
 
 	uint32_t version;
 	if (! fram->read(CONFIG_VERSION_OFFSET, &version, sizeof(version))) return false;
-	//
-	//
-	// Upgrade old configurations
+
+	config_t new_c;
+	if (! fram->read(CONFIG_DATA_OFFSET, &new_c, sizeof(new_c))) return false;
+	*c = new_c;
+
+	if (version == 2) {
+	    printf("Upgrading config version 2 to 3\n");
+	    c->retract = factory_config.retract;
+	    version++;
+	}
 
 	if (version != CONFIG_VERSION) {
 	    printf("Loaded version %u of the configuration (should be %u)\n", (unsigned) version, (unsigned) CONFIG_VERSION);
 	    return false;
 	}
-
-	config_t new_c;
-	if (! fram->read(CONFIG_DATA_OFFSET, &new_c, sizeof(new_c))) return false;
-	*c = new_c;
 
 	return true;
     }
@@ -108,8 +111,12 @@ public:
     }
 
     static bool exists() {
+#if 0
 	i2c_init_bus(I2C_BUS, I2C_SDA, I2C_SCL);
 	return (i2c_exists(I2C_BUS, 0x50));
+#else
+	return false;
+#endif
     }
 
 private:
@@ -216,13 +223,13 @@ static void set_all_config(config_t *c, bool validate_only = false) {
 
 class Switch {
 public:
-    Switch(int pin, ThreadInterruptNotifier *notifier) : pin(pin) {
+    Switch(int pin, ThreadInterruptNotifier *notifier, bool is_inverted = false) : pin(pin) {
 	input = new GPInput(pin);
 	input->set_pullup_up();
-	input->set_debounce_us(50);
-	input->set_is_inverted();
-	input->set_notifier(notifier);
+	input->set_debounce_us(1000);
+	input->set_is_inverted(is_inverted);
 	update();
+	input->set_notifier(notifier);
     }
 
     bool update() {
@@ -452,21 +459,10 @@ public:
 	    case STOP:
 		light->stop();
 		break;
-	    case FEED:
-		light->active();
-		if (! is_loaded) state = STOP;
-		else if (buffer_is_full) state = FEED_WAITING;
-		else feed = manual_feed;
-		break;
-	    case FEED_WAITING:
-		light->waiting();
-		if (! is_loaded) state = STOP;
-		else if (! buffer_is_full) state = FEED;
-		break;
 	    case RETRACT:
 		light->retract();
 		if (! is_present) state = STOP;
-		else feed = manual_feed;
+		else feed = config.retract.speed;
 		break;
 	    }
 
@@ -512,25 +508,20 @@ public:
 
     void error() {
 	stepper->set_speed(0);
+	change_state(STOP);
 	state = STOP;
     }
 
     void stop() {
-	state = STOP;
-    }
-
-    void feed(int mm_per_sec = 10) {
-	manual_feed = mm_per_sec;
-	state = FEED;
-    }
-
-    void retract(int mm_per_sec = 10) {
-	manual_feed = -mm_per_sec;
-	state = RETRACT;
+	change_state(STOP);
     }
 
     void resume() {
-	state = INIT;
+	change_state(INIT);
+    }
+
+    void retract() {
+	change_state(RETRACT);
     }
 
 private:
@@ -541,7 +532,6 @@ private:
     LaneLight *light;
 
     us_time_t preloading_started_at = 0;
-    int manual_feed = 0;
     double target_mm = 0, y_output_target_mm = 0;
     us_time_t wait_until = 0;
     int n_buffer_retries = 0, n_y_retries = 0;
@@ -553,10 +543,16 @@ private:
 	    ACTIVE, WAITING, ACTIVE_RETRACT,
 	    EMPTYING,
 	    ERROR,
-	    STOP, FEED, FEED_WAITING, RETRACT
+	    STOP, RETRACT
 	} state = INIT;
 
 private:
+    void change_state(enum State new_state) {
+	enum State old_state = state;
+	state = new_state;
+	trace_state(old_state);
+    }
+
     const char *state_to_string(enum State state) {
 	switch (state) {
 	case INIT: return "init";
@@ -574,8 +570,6 @@ private:
 	case EMPTYING: return "emptying";
 	case ERROR: return "error";
 	case STOP: return "stop";
-	case FEED: return "feed";
-	case FEED_WAITING: return "feed-waiting";
 	case RETRACT: return "retract";
 	}
 	return "** INVALID STATE**";
@@ -621,6 +615,9 @@ private:
     PiCond *cond;
 };
 
+static const char *lane_names[2] = { "lane-1", "lane-2" };
+static const char *stepper_names[2] = { "stepper-1", "stepper-2" };
+
 class Coordinator : public PiThread {
 public:
     Coordinator(Lights *lights) : PiThread("coordinator"), lights(lights) {
@@ -632,17 +629,23 @@ public:
 
 	tx = pico_new_pio_uart_tx(config.motor_config.tx, 115200);
 	buffer_switches = new BufferSwitches(&config.buffer, notifier);
-	lane_1_switches = new LaneSwitches(&config.lanes[0], notifier);
-	lane_2_switches = new LaneSwitches(&config.lanes[1], notifier);
-	lane_1 = new Lane(lane_1_switches, buffer_switches, create_lane_stepper(&config.lanes[0], &config.motor_config, "stepper-1", tx), new LaneLight(lights, 0), "lane-1");
-	lane_2 = new Lane(lane_2_switches, buffer_switches, create_lane_stepper(&config.lanes[1], &config.motor_config, "stepper-2", tx), new LaneLight(lights, 1), "lane-2");
+	for (int i = 0; i < 2; i++) {
+	    lane_switches[i] = new LaneSwitches(&config.lanes[i], notifier);
+	    lane[i] = new Lane(lane_switches[i], buffer_switches, create_lane_stepper(&config.lanes[i], &config.motor_config, stepper_names[i], tx), new LaneLight(lights, i), lane_names[i]);
+	}
 
-	if (! lane_1_switches->is_loaded() && ! lane_2_switches->is_loaded() && buffer_switches->has_y_output()) {
+	manual_switch = new Switch(config.retract.manual, notifier);
+	retract_switches[0] = new Switch(config.retract.lane[0], notifier, true);
+	retract_switches[1] = new Switch(config.retract.lane[1], notifier, true);
+
+	if (manual_switch->get()) {
+	    stop();
+	} else if (! lane_switches[0]->is_loaded() && ! lane_switches[1]->is_loaded() && buffer_switches->has_y_output()) {
 	    // Special case, neither lane is active but one of them was active
 	    // when we last stopped running.  Since we don't know which one is
 	    // supposed to active, move them both to emptying
-	    lane_1->emptying();
-	    lane_2->emptying();
+	    lane[0]->emptying();
+	    lane[1]->emptying();
 	}
 
 	update(true);
@@ -650,9 +653,9 @@ public:
 	lock->unlock();
 
 	// TODO: What to do here!?!?!
-	while (lane_1->is_active() && lane_2->is_active()) {
-	    lane_1->error();
-	    lane_2->error();
+	while (lane[0]->is_active() && lane[1]->is_active()) {
+	    lane[0]->error();
+	    lane[1]->error();
 	    printf("\n\nFATAL ERROR: both lanes think they are active!!\n");
 	    ms_sleep(1000);
 	}
@@ -672,19 +675,29 @@ public:
 
     void update(bool force = true) {
 	bool output_changed = buffer_switches->update();
-	bool l1_changed = lane_1_switches->update();
-	bool l2_changed = lane_2_switches->update();
-
-	if (force || l1_changed || (active_lane == lane_1 && output_changed)) update_polling_us(lane_1->update());
-	if (force || l2_changed || (active_lane == lane_2 && output_changed)) update_polling_us(lane_2->update());
+	for (int i = 0; i < 2; i++ ){
+	    bool changed = lane_switches[i]->update();
+	    if (force || changed || (active_lane == lane[i] && output_changed)) update_polling_us(lane[i]->update());
+	}
 
 	if (active_lane && ! active_lane->is_active()) active_lane = NULL;
 
+	if (manual_switch->update()) {
+	    if (manual_switch->get()) stop();
+	    else resume();
+	}
+
+	for (int i = 0; i < 2; i++) {
+	    if (retract_switches[i]->update() && manual_switch->get()) {
+		if (retract_switches[i]->get()) lane[i]->retract();
+		else lane[i]->stop();
+		update(true);
+	    }
+	}
+
 	if (! active_lane) {
-	    if (lane_1->is_active()) active_lane = lane_1;
-	    else if (lane_2->is_active()) active_lane = lane_2;
-	    else if (lane_1->is_ready()) active_lane = lane_1;
-	    else if (lane_2->is_ready()) active_lane = lane_2;
+	    update_activate();
+
 	    if (active_lane && ! active_lane->is_active()) {
 		update_polling_us(active_lane->activate());
 		printf("activated: ");
@@ -693,47 +706,31 @@ public:
 	    }
 	}
     }
-	
+
     void dump_state() {
 	printf("======== Current State ===============\n");
-	if (active_lane) printf("%s: ", lane_1 == active_lane ? "ACTIVE" : "      ");
-	lane_1->dump_state();
-	printf("\n");
-	if (active_lane) printf("%s: ", lane_2 == active_lane ? "ACTIVE" : "      ");
-	lane_2->dump_state();
-	printf("\n");
+	for (int i = 0; i < 2; i++) {
+	    if (active_lane) printf("%s: ", lane[i] == active_lane ? "ACTIVE" : "      ");
+	    lane[i]->dump_state();
+	    printf("\n");
+	}
 	printf("all switches: lane_1:");
-	lane_1_switches->dump_state();
+	lane_switches[0]->dump_state();
 	printf(" || lane_2:");
-	lane_2_switches->dump_state();
+	lane_switches[1]->dump_state();
 	printf(" || output:");
 	buffer_switches->dump_state();
+	printf(" || manual %d retract %d %d\n", manual_switch->get(), retract_switches[0]->get(), retract_switches[1]->get());
 	printf("\n");
     }
 
     void stop() {
-	lane_1->stop();
-	lane_2->stop();
-	update(true);
-    }
-
-    void feed(int lane, int speed) {
-	if (lane == 1) lane_1->feed(speed);
-	else if (lane == 2) lane_2->feed(speed);
-	else if (lane < 0 && active_lane) active_lane->feed(speed);
-	update(true);
-    }
-
-    void retract(int lane, int speed) {
-	if (lane == 0) lane_1->retract(speed);
-	else if (lane == 1) lane_2->retract(speed);
-	else if (lane < 0 && active_lane) active_lane->retract(speed);
+	for (int i = 0; i < 2; i++) lane[i]->stop();
 	update(true);
     }
 
     void resume() {
-	lane_1->resume();
-	lane_2->resume();
+	for (int i = 0; i < 2; i++) lane[i]->resume();
 	update(true);
     }
 
@@ -741,6 +738,21 @@ private:
     void update_polling_us(us_time_t new_polling_us) {
 	if (! new_polling_us) return;
 	else if (polling_us == 0 || new_polling_us < polling_us) polling_us = new_polling_us;
+    }
+
+    void update_activate() {
+	for (int i = 0; i < 2; i++) {
+	    if (lane[i]->is_active()) {
+		active_lane = lane[i];
+		return;
+	    }
+	}
+	for (int i = 0; i < 2; i++) {
+	    if (lane[i]->is_ready()) {
+		active_lane = lane[i];
+		return;
+	    }
+	}
     }
 
 private:
@@ -752,10 +764,11 @@ private:
 
     UART_Tx *tx;
     BufferSwitches *buffer_switches;
-    LaneSwitches *lane_1_switches;
-    LaneSwitches *lane_2_switches;
-    Lane *lane_1;
-    Lane *lane_2;
+    LaneSwitches *lane_switches[2];
+    Lane *lane[2];
+
+    Switch *manual_switch;
+    Switch *retract_switches[2];
 
     Lane *active_lane = NULL;
     us_time_t polling_us = 0;
@@ -836,22 +849,8 @@ static void threads_main(int argc, char **argv) {
 		sscanf(&line[12], "%d", &enabled);
 		if (enabled) state_dumper->enable();
 		else state_dumper->disable();
-	    } else if (strcmp(line, "stop") == 0) {
-		coordinator->stop();
-	    } else if (strcmp(line, "resume") == 0) {
-		coordinator->resume();
-	    } else if (strncmp(line, "feed", 5) == 0) {
-		int lane = -1;
-		int speed = config.motor_config.loading_speed;
-		sscanf(&line[4], "%d %d", &lane, &speed);
-		coordinator->feed(lane, speed);
-	    } else if (strncmp(line, "retract", 7) == 0) {
-		int lane = -1;
-		int speed = config.motor_config.loading_speed;
-		sscanf(&line[7], "%d %d", &lane, &speed);
-		coordinator->retract(lane, speed);
 	    } else if (strcmp(line, "factory-reset") == 0 && storage) {
-		storage->save(&factory_config);
+		if (storage) storage->save(&factory_config);
 	    } else if (strcmp(line, "show") == 0 || strcmp(line, "config") == 0) {
 		set_all_config(&config, true);
 	    } else if (strncmp(line, "set ", 4) == 0 || strncmp(line, "show ", 5) == 0) {
@@ -875,7 +874,7 @@ static void threads_main(int argc, char **argv) {
 		    dirty = false;
 		}
 		if (dirty) {
-		    storage->save(&config);
+		    if (storage) storage->save(&config);
 		}
 	    } else if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) {
 		printf("\nConfiguration:");
@@ -884,17 +883,12 @@ static void threads_main(int argc, char **argv) {
 		printf("show [all | lane_1 | lane_2 | motor | buffer]: show configuration\n");
 		printf("config : show full configuration\n");
 		if (storage) printf("factory-reset\n");
-		printf("\nInfinite Feeder Control:");
-		printf("\n------------------------\n");
-		printf("stop: switch to manual processing\n");
-		printf("feed [lane [speed]]: cause a lane to start feeding filament\n");
-		printf("retract [lane [speed]]: cause a lane to start retracting filament\n");
-		printf("resume: go back to normal processing\n");
 		printf("\nPico Control:");
 		printf("\n-------------\n");
 		printf("bootsel: reboot to bootloader mode\n");
 		printf("reboot\n");
 		printf("state: dump state\n");
+		printf("state-dumper [0|1]\n");
 		printf("threads: dump thread state\n");
 	    } else if (line[0]) {
 		printf("help or ? for usage\n");
