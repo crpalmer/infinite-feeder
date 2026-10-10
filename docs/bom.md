@@ -1,4 +1,4 @@
-# BOM:
+# BOM
 
 This design requires 2 extruders.  It accommodates either Orbiter v2 / v2.5 or BMG (and clones).  I used Orbiter extruders for my 600x600x650mm printer because I wanted the increased component quality and reliability for a printer that mostly prints multi-KG parts. I used BMG clones to cut costs for a smaller printer that mostly prints sub-1KG parts.  Either way, you'll need to select and source two extruders that match either Orbier or BMG dimensions.
 
@@ -6,7 +6,7 @@ It can also be helpful to have a set of taps (M2, M2.5 and M3) but these are not
 
 You'll also need to make custom cables using crimpers, etc.  There are Dupont connects and JST-XH connectors used in the build.  Mostly just JST to JST for which you can purchase premade wires if necessary.
 
-## Main components:
+## Main components
 
 ### Electronics
 
